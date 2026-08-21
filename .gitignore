@@ -1,0 +1,34 @@
+# Copyright (C) 2026 Kevin Monaghan. All rights reserved.
+#
+# This file is proprietary and confidential.
+# Unauthorized copying, use, modification, distribution, or disclosure of this file,
+# via any medium, is strictly prohibited except under a written agreement with the
+# copyright owner.
+
+/target
+
+# Local credentials and operator configuration. Only deliberately synthetic
+# examples named `.env.example` may be committed.
+.env
+.env.*
+!.env.example
+.direnv/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Provider captures and diagnostic artifacts.
+*.har
+*.pcap
+*.pcapng
+*.profraw
+lcov.info
+coverage/
+
+# Editor and operating-system state.
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

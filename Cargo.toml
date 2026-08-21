@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2026 Kevin Monaghan
+# SPDX-License-Identifier: LicenseRef-Proprietary
+
+[package]
+name = "tradovate-client"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+description = "Private, exact-decimal Rust client for the Tradovate REST API"
+repository = "https://github.com/SharurTrading/tradovate-rs"
+license = "LicenseRef-Proprietary"
+
+[dependencies]
+futures-util = "0.3.33"
+jiff = { version = "0.2.35", features = ["serde", "std"] }
+parking_lot = "0.12.5"
+reqwest = { version = "0.13.4", default-features = false, features = ["query", "rustls", "stream"] }
+rust_decimal = { version = "1.42.1", default-features = false, features = ["std"] }
+secrecy = "0.10.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["raw_value"] }
+thiserror = "2.0.19"
+tokio = { version = "1.53.1", features = ["macros", "net", "rt", "sync", "time"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tokio-util = { version = "0.7.19", features = ["rt"] }
+tracing = "0.1.44"
+url = "2.5.8"
+
+[dev-dependencies]
+httpmock = "0.8.3"
+proptest = "1.11.0"
+
+[lints.rust]
+missing_docs = "deny"
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+await_holding_lock = "deny"
+expect_used = "deny"
+unwrap_used = "deny"

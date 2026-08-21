@@ -1,0 +1,207 @@
+# Copyright (C) 2026 Kevin Monaghan. All rights reserved.
+#
+# This file is proprietary and confidential.
+# Unauthorized copying, use, modification, distribution, or disclosure of this file,
+# via any medium, is strictly prohibited except under a written agreement with the
+# copyright owner.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Rust quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read Rust toolchain channel
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel=$(awk -F'"' '/^channel[[:space:]]*=/ {print $2; exit}' rust-toolchain.toml)
+          [ -n "$channel" ] || { echo "::error::Could not read channel from rust-toolchain.toml"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@91ddec75689c4c78665b598d188dc821c5a43e5c # v2.85.9
+        with:
+          fallback: none
+          tool: cargo-nextest@0.9.140
+
+      - name: Verify proprietary file headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          while IFS= read -r -d '' file; do
+            if [ "$file" = "Cargo.lock" ]; then
+              continue
+            fi
+            header=$(head -n 12 -- "$file")
+            full_notice=false
+            spdx_notice=false
+            if grep --fixed-strings --quiet \
+              "Copyright (C) 2026 Kevin Monaghan. All rights reserved." <<< "$header" \
+              && grep --ignore-case --fixed-strings --quiet \
+                "proprietary and confidential" <<< "$header"; then
+              full_notice=true
+            fi
+            if grep --fixed-strings --quiet \
+              "SPDX-FileCopyrightText: 2026 Kevin Monaghan" <<< "$header" \
+              && grep --fixed-strings --quiet \
+                "SPDX-License-Identifier: LicenseRef-Proprietary" <<< "$header"; then
+              spdx_notice=true
+            fi
+            if [ "$full_notice" != "true" ] && [ "$spdx_notice" != "true" ]; then
+              echo "::error file=${file}::missing the full proprietary notice or LicenseRef-Proprietary SPDX header"
+              status=1
+            fi
+          done < <(git ls-files -z -- '*.rs' '*.sh' '*.toml' '*.md' '*.yml' '*.yaml')
+          exit "$status"
+
+      - name: Enforce file-size policy
+        run: bash scripts/ci/check_file_sizes.sh
+
+      - name: Prove dependency-owned HTTP retries are disabled
+        shell: bash
+        run: |
+          if ! grep --fixed-strings --quiet ".retry(reqwest::retry::never())" src/client/builder.rs; then
+            echo "::error::the shared reqwest client must explicitly disable dependency-owned retries"
+            exit 1
+          fi
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo check without default features
+        run: cargo check --no-default-features --locked
+
+      - name: cargo clippy (all targets and features)
+        run: >-
+          cargo clippy --all-targets --all-features --locked --
+          -D warnings
+          -D clippy::pedantic
+          -D clippy::await_holding_lock
+          -D clippy::expect_used
+          -D clippy::unwrap_used
+
+      - name: cargo doc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --all-features --no-deps --locked
+
+      - name: cargo nextest
+        run: cargo nextest run --all-features --locked --no-fail-fast
+
+      - name: cargo test doctests
+        run: cargo test --doc --all-features --locked
+
+  supply-chain:
+    name: Supply chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read Rust toolchain channel
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel=$(awk -F'"' '/^channel[[:space:]]*=/ {print $2; exit}' rust-toolchain.toml)
+          [ -n "$channel" ] || { echo "::error::Could not read channel from rust-toolchain.toml"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@91ddec75689c4c78665b598d188dc821c5a43e5c # v2.85.9
+        with:
+          fallback: none
+          tool: cargo-deny@0.20.2
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@91ddec75689c4c78665b598d188dc821c5a43e5c # v2.85.9
+        with:
+          fallback: none
+          tool: cargo-audit@0.22.2
+
+      - name: cargo deny
+        run: cargo deny --locked check
+
+      - name: Prove the advisory-exempt dependency is inactive
+        shell: bash
+        run: |
+          if cargo tree --locked --all-features --edges normal,build,dev --prefix none \
+            | grep --extended-regexp --quiet '^rkyv v0\.7\.'; then
+            echo "::error::RUSTSEC-2026-0235 exemption is invalid because rkyv 0.7 is active"
+            exit 1
+          fi
+
+      - name: cargo audit
+        # Cargo records rust_decimal's disabled optional rkyv 0.7 feature in the
+        # lockfile. The preceding feature-graph gate proves it is not compiled.
+        run: >-
+          cargo audit --file Cargo.lock --deny warnings
+          --ignore RUSTSEC-2026-0235
+
+  secret-scan:
+    name: Secret scan (full history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Gitleaks 8.30.1
+        shell: bash
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_LINUX_X64_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          archive="${RUNNER_TEMP}/gitleaks.tar.gz"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-all-errors \
+            --output "${archive}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          printf '%s  %s\n' "${GITLEAKS_LINUX_X64_SHA256}" "${archive}" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file="${archive}" --directory="${RUNNER_TEMP}" gitleaks
+
+      - name: Scan every reachable commit for secrets
+        shell: bash
+        run: >-
+          "${RUNNER_TEMP}/gitleaks" git
+          --no-banner
+          --redact
+          --log-opts="--all"
+          .
