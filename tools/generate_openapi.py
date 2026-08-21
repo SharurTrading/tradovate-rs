@@ -1465,7 +1465,10 @@ class Generator:
                     f"{self._response_contract(item)} |\n"
                 )
             lines.append("\n")
-        path.write_text("".join(lines), encoding="utf-8")
+        # Keep generated Markdown compatible with `git diff --check`: exactly
+        # one newline terminates the file, regardless of how many capability
+        # sections were rendered above.
+        path.write_text("".join(lines).rstrip("\n") + "\n", encoding="utf-8")
 
     def _render_manifest(self, path: Path) -> None:
         lines = [header(), "//! Exhaustive current REST operation manifest.\n\n", "use crate::api::current::{HttpMethod, Operation, OperationClass, OperationSurface, ResponseContract};\n\n", "/// Every operation in the pinned current Partner `OpenAPI`.\n", "pub const OPERATIONS: &[Operation] = &[\n"]
