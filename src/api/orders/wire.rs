@@ -6,8 +6,9 @@
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use super::{OrderQuantity, OrderSide, OrderType, PlaceOrder, TimeInForce};
-use crate::client::MutationWireResponse;
+use super::{CancelOrder, OrderQuantity, OrderSide, OrderType, PlaceOrder, TimeInForce};
+use crate::api::orders::failure::{OrderFailureReason, deserialize_optional_non_null};
+use crate::client::{DocumentedMutationResponse, MutationOutcome};
 use crate::{AccountId, ClientOrderId, CommandId, Decimal, Error, OrderId};
 
 #[derive(Serialize)]
@@ -33,11 +34,26 @@ pub(super) struct PlaceOrderWire<'a> {
     time_in_force: TimeInForce,
     #[serde(skip_serializing_if = "Option::is_none")]
     expire_time: Option<Timestamp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activation_time: Option<Timestamp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    custom_tag50: Option<&'a str>,
     is_automated: bool,
 }
 
 impl<'a> From<&'a PlaceOrder> for PlaceOrderWire<'a> {
     fn from(order: &'a PlaceOrder) -> Self {
+        // Current Partner place-order documentation (pinned 2026-08-21)
+        // explicitly puts a single Stop trigger in `price`. Preserve the
+        // compatible builder's `stop_price` input while translating only at
+        // the provider boundary.
+        let (price, stop_price) = if matches!(order.order_type, OrderType::Stop) {
+            (order.stop_price, None)
+        } else {
+            (order.price, order.stop_price)
+        };
         Self {
             account_id: order.account_id,
             symbol: order.symbol.as_str(),
@@ -45,10 +61,13 @@ impl<'a> From<&'a PlaceOrder> for PlaceOrderWire<'a> {
             action: order.side,
             order_qty: order.quantity,
             order_type: order.order_type,
-            price: order.price,
-            stop_price: order.stop_price,
+            price,
+            stop_price,
             time_in_force: order.time_in_force,
             expire_time: order.expire_time,
+            text: order.text.as_ref().map(super::OrderText::as_str),
+            activation_time: order.activation_time,
+            custom_tag50: order.custom_tag50.as_ref().map(super::CustomTag50::as_str),
             is_automated: order.origin.is_automated(),
         }
     }
@@ -60,32 +79,91 @@ pub(super) struct CancelOrderWire<'a> {
     pub(super) order_id: OrderId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) cl_ord_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) activation_time: Option<Timestamp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) custom_tag50: Option<&'a str>,
     pub(super) is_automated: bool,
+}
+
+impl<'a> From<&'a CancelOrder> for CancelOrderWire<'a> {
+    fn from(command: &'a CancelOrder) -> Self {
+        Self {
+            order_id: command.order_id,
+            cl_ord_id: command.client_order_id.as_ref().map(ClientOrderId::as_str),
+            activation_time: command.activation_time,
+            custom_tag50: command
+                .custom_tag50
+                .as_ref()
+                .map(super::CustomTag50::as_str),
+            is_automated: command.origin.is_automated(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct PlacementResponse {
-    pub(super) failure_reason: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
+    pub(super) failure_reason: Option<OrderFailureReason>,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
+    pub(super) failure_text: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     pub(super) order_id: Option<OrderId>,
 }
 
-impl MutationWireResponse for PlacementResponse {
+impl DocumentedMutationResponse for PlacementResponse {
+    fn mutation_outcome(&self) -> MutationOutcome {
+        match classify_outcome(
+            self.failure_reason.as_ref(),
+            self.failure_text.as_deref(),
+            self.order_id,
+        ) {
+            WireOutcome::Accepted(_) => MutationOutcome::Success,
+            WireOutcome::Rejected(_) => MutationOutcome::Rejected,
+            WireOutcome::Ambiguous => MutationOutcome::Ambiguous,
+        }
+    }
+
     fn has_success_evidence(&self) -> bool {
-        self.order_id.is_some() || self.failure_reason.as_deref() == Some("Success")
+        self.order_id.is_some()
+            || self
+                .failure_reason
+                .as_ref()
+                .is_some_and(OrderFailureReason::is_success)
     }
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct CommandResponse {
-    pub(super) failure_reason: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
+    pub(super) failure_reason: Option<OrderFailureReason>,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
+    pub(super) failure_text: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     pub(super) command_id: Option<CommandId>,
 }
 
-impl MutationWireResponse for CommandResponse {
+impl DocumentedMutationResponse for CommandResponse {
+    fn mutation_outcome(&self) -> MutationOutcome {
+        match classify_outcome(
+            self.failure_reason.as_ref(),
+            self.failure_text.as_deref(),
+            self.command_id,
+        ) {
+            WireOutcome::Accepted(_) => MutationOutcome::Success,
+            WireOutcome::Rejected(_) => MutationOutcome::Rejected,
+            WireOutcome::Ambiguous => MutationOutcome::Ambiguous,
+        }
+    }
+
     fn has_success_evidence(&self) -> bool {
-        self.command_id.is_some() || self.failure_reason.as_deref() == Some("Success")
+        self.command_id.is_some()
+            || self
+                .failure_reason
+                .as_ref()
+                .is_some_and(OrderFailureReason::is_success)
     }
 }
 
@@ -120,15 +198,28 @@ pub(super) fn validate_prices(
 
 pub(super) enum WireOutcome<T> {
     Accepted(T),
-    Rejected,
+    Rejected(OrderFailureReason),
     Ambiguous,
 }
 
-pub(super) fn classify_outcome<T>(reason: Option<&str>, id: Option<T>) -> WireOutcome<T> {
-    let success = reason.is_none_or(|reason| reason == "Success");
-    match (success, id) {
-        (true, Some(id)) => WireOutcome::Accepted(id),
-        (false, None) => WireOutcome::Rejected,
-        (true, None) | (false, Some(_)) => WireOutcome::Ambiguous,
+pub(super) fn classify_outcome<T>(
+    reason: Option<&OrderFailureReason>,
+    failure_text: Option<&str>,
+    id: Option<T>,
+) -> WireOutcome<T> {
+    let has_success_evidence = reason.is_some_and(OrderFailureReason::is_success) || id.is_some();
+    if has_nonempty_text(failure_text) && has_success_evidence {
+        return WireOutcome::Ambiguous;
     }
+    match (reason, id) {
+        (None | Some(OrderFailureReason::Success), Some(id)) => WireOutcome::Accepted(id),
+        (Some(reason), None) if reason.is_known_rejection() => {
+            WireOutcome::Rejected(reason.clone())
+        }
+        _ => WireOutcome::Ambiguous,
+    }
+}
+
+pub(super) fn has_nonempty_text(value: Option<&str>) -> bool {
+    value.is_some_and(|value| !value.is_empty())
 }

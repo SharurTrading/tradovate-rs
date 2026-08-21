@@ -20,8 +20,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    ConnectionId, FrameCodec, RealtimeConfig, RealtimeError, RealtimeEvent, RealtimeNotice,
-    RealtimeState, Response, SocketKind,
+    ConnectionId, FrameCodec, RealtimeConfig, RealtimeError, RealtimeEvent, RealtimeState,
+    Response, SocketKind, UserSyncConfig,
     actor::{self, ActorInput, Command},
 };
 use crate::{Client, auth::TokenKind};
@@ -84,18 +84,8 @@ impl RealtimeConnection {
     /// `None` means the actor has stopped. Inspect [`Self::state`] for the
     /// terminal category, then establish any required recovery boundary before
     /// accepting events from a replacement connection.
-    #[cfg(test)]
-    pub(crate) async fn recv_event(&mut self) -> Option<RealtimeEvent> {
+    pub async fn recv_event(&mut self) -> Option<RealtimeEvent> {
         self.events.recv().await
-    }
-
-    /// Receives the next bounded, typed lifecycle notice.
-    ///
-    /// Payload-bearing realtime capabilities remain private until their domain
-    /// models are complete. This method deliberately reveals only the event
-    /// family and immutable connection generation.
-    pub async fn recv_notice(&mut self) -> Option<RealtimeNotice> {
-        self.events.recv().await.map(RealtimeNotice::from_event)
     }
 
     /// Sends one crate-validated, non-money-moving request and waits for its response.
@@ -195,9 +185,9 @@ impl Client {
     /// access token. The method spawns onto the caller's active Tokio runtime
     /// and returns only after authorization succeeds.
     ///
-    /// User sockets currently use the crate's fixed, unsplit synchronization
-    /// profile. B2B split-response and configurable sharding profiles are not
-    /// yet supported.
+    /// User sockets use [`UserSyncConfig::default`], which explicitly requests
+    /// all pinned current entity families in one unsplit bootstrap. Use
+    /// [`Self::connect_user_realtime`] for documented filters or sharding.
     ///
     /// # Errors
     ///
@@ -208,7 +198,39 @@ impl Client {
         kind: SocketKind,
         config: RealtimeConfig,
     ) -> Result<RealtimeConnection, RealtimeError> {
+        self.connect_realtime_inner(kind, config, UserSyncConfig::default())
+            .await
+    }
+
+    /// Establishes a user socket with a validated current synchronization profile.
+    ///
+    /// The profile always uses a single response. User/account filters,
+    /// point-in-time cutoff, all current entity families, socket sharding, and
+    /// the full-organization flag are available through [`UserSyncConfig`].
+    /// B2B `splitResponses: true` remains documentation-blocked because the
+    /// provider does not publish a safe multipart completion marker.
+    ///
+    /// # Errors
+    ///
+    /// Returns a configuration, authentication, setup, transport, or protocol
+    /// error. Token values are never retained by the error.
+    pub async fn connect_user_realtime(
+        &self,
+        config: RealtimeConfig,
+        user_sync: UserSyncConfig,
+    ) -> Result<RealtimeConnection, RealtimeError> {
+        self.connect_realtime_inner(SocketKind::User, config, user_sync)
+            .await
+    }
+
+    async fn connect_realtime_inner(
+        &self,
+        kind: SocketKind,
+        config: RealtimeConfig,
+        user_sync: UserSyncConfig,
+    ) -> Result<RealtimeConnection, RealtimeError> {
         let config = config.validate()?;
+        let user_sync = user_sync.validate()?;
         let runtime =
             tokio::runtime::Handle::try_current().map_err(|_| RealtimeError::RuntimeUnavailable)?;
         let (url, token_kind) = match kind {
@@ -243,6 +265,7 @@ impl Client {
             token,
             tokens: Arc::clone(&self.tokens),
             config,
+            user_sync,
             commands: command_receiver,
             events: event_sender,
             state: state_sender,

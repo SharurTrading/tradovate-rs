@@ -3,9 +3,12 @@
 
 //! Shared, bounded rolling-window request admission.
 
+mod account;
 mod admission;
 mod cooldown;
 mod window;
+
+pub(crate) use admission::RateAdmission;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -13,16 +16,13 @@ use std::{
 };
 
 use parking_lot::Mutex;
-use tokio::{
-    sync::Notify,
-    time::{Instant, sleep},
-};
+use tokio::{sync::Notify, time::Instant};
 
 use self::{
-    admission::FailedOnlyAdmission,
+    account::AccountWindows,
     window::{Audience, FailedOnlyWindow, Window, tradovate_failed_only, tradovate_windows},
 };
-use crate::Error;
+use crate::AccountId;
 
 const HOUR: Duration = Duration::from_hours(1);
 
@@ -32,6 +32,7 @@ struct State {
     failed_only: HashMap<&'static str, FailedOnlyWindow>,
     endpoint_cooldowns: HashMap<&'static str, Instant>,
     endpoint_blocked: HashSet<&'static str>,
+    account_windows: AccountWindows,
     global_cooldown: Option<Instant>,
     global_blocked: bool,
 }
@@ -51,6 +52,7 @@ impl RateGovernor {
                 failed_only: tradovate_failed_only(),
                 endpoint_cooldowns: HashMap::new(),
                 endpoint_blocked: HashSet::new(),
+                account_windows: AccountWindows::default(),
                 global_cooldown: None,
                 global_blocked: false,
             }),
@@ -58,49 +60,10 @@ impl RateGovernor {
         }
     }
 
-    pub(crate) async fn wait(&self, endpoint: &'static str) {
-        loop {
-            let retry_after = self.try_admit_authenticated(endpoint);
-            if retry_after.is_zero() {
-                return;
-            }
-            sleep(retry_after).await;
-        }
-    }
-
     pub(crate) fn try_admit_authenticated(&self, endpoint: &'static str) -> Duration {
         self.try_admit(Audience::Authenticated, endpoint, false)
-    }
-
-    pub(crate) async fn begin_anonymous_failed_only(
-        &self,
-        endpoint: &'static str,
-    ) -> FailedOnlyAdmission<'_> {
-        loop {
-            let notified = self.changed.notified();
-            tokio::pin!(notified);
-            notified.as_mut().enable();
-            let retry_after = self.try_admit(Audience::Anonymous, endpoint, true);
-            if retry_after.is_zero() {
-                return FailedOnlyAdmission::new(self, endpoint);
-            }
-            tokio::select! {
-                () = sleep(retry_after) => {}
-                () = &mut notified => {}
-            }
-        }
-    }
-
-    pub(crate) fn admit_immediate(&self, endpoint: &'static str) -> Result<(), Error> {
-        let retry_after = self.try_admit(Audience::Authenticated, endpoint, false);
-        if retry_after.is_zero() {
-            Ok(())
-        } else {
-            Err(Error::LocalRateLimit {
-                endpoint,
-                retry_after,
-            })
-        }
+            .err()
+            .unwrap_or_default()
     }
 
     fn try_admit(
@@ -108,7 +71,17 @@ impl RateGovernor {
         audience: Audience,
         endpoint: &'static str,
         reserve_failed_only: bool,
-    ) -> Duration {
+    ) -> Result<Instant, Duration> {
+        self.try_admit_inner(audience, endpoint, reserve_failed_only, None)
+    }
+
+    fn try_admit_inner(
+        &self,
+        audience: Audience,
+        endpoint: &'static str,
+        reserve_failed_only: bool,
+        account_id: Option<AccountId>,
+    ) -> Result<Instant, Duration> {
         let now = Instant::now();
         let mut state = self.state.lock();
         let mut retry_after = if state.global_blocked {
@@ -145,6 +118,15 @@ impl RateGovernor {
                 retry_after = retry_after.max(window.retry_after(now));
             }
         }
+        let account_reservation = account_id.and_then(|account_id| {
+            match state.account_windows.evaluate(now, endpoint, account_id) {
+                Ok(reservation) => Some(reservation),
+                Err(account_retry) => {
+                    retry_after = retry_after.max(account_retry);
+                    None
+                }
+            }
+        });
         if retry_after.is_zero() {
             for window in state
                 .windows
@@ -156,20 +138,13 @@ impl RateGovernor {
             if reserve_failed_only && let Some(window) = state.failed_only.get_mut(endpoint) {
                 window.reservations = window.reservations.saturating_add(1);
             }
+            if let Some(reservation) = account_reservation {
+                state.account_windows.admit(reservation);
+            }
+            Ok(now)
+        } else {
+            Err(retry_after)
         }
-        retry_after
-    }
-
-    fn finish_failed_only(&self, endpoint: &'static str, failed: bool) {
-        let mut state = self.state.lock();
-        let Some(window) = state.failed_only.get_mut(endpoint) else {
-            return;
-        };
-        window.reservations = window.reservations.saturating_sub(1);
-        if failed {
-            window.failures.push_back(Instant::now());
-        }
-        self.changed.notify_waiters();
     }
 }
 

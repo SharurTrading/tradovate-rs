@@ -17,17 +17,20 @@ use tokio::{
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
-use self::handshake::{AuthorizationFence, SocketReader, SocketWriter};
+use self::handshake::{AuthorizationFence, EstablishInput, SocketReader, SocketWriter};
 use self::lifecycle::{
-    normalize_shutdown, publish_active_terminal, publish_setup_failure, publish_shutdown,
+    normalize_shutdown, publish_active_terminal, publish_event, publish_setup_failure,
+    publish_shutdown,
 };
 use self::pending::{PendingReply, PendingRequests, wait_for_deadline};
 use super::{
-    ConnectionId, FrameCodec, RealtimeConfig, RealtimeError, RealtimeEvent, RealtimeEventPayload,
-    RealtimeState, Response, ResyncReason, ServerFrame, ServerMessage,
+    ConnectionId, FrameCodec, RealtimeConfig, RealtimeError, RealtimeEvent, RealtimeState,
+    Response, ResyncReason, ServerFrame, ServerMessage, event::decode,
 };
-use crate::auth::{TokenSnapshot, TokenStore};
-use crate::rate_limit::RateGovernor;
+use crate::{
+    auth::{TokenSnapshot, TokenStore},
+    rate_limit::RateGovernor,
+};
 
 pub(super) struct ActorInput {
     pub(super) connection_id: ConnectionId,
@@ -36,6 +39,7 @@ pub(super) struct ActorInput {
     pub(super) token: TokenSnapshot,
     pub(super) tokens: std::sync::Arc<TokenStore>,
     pub(super) config: RealtimeConfig,
+    pub(super) user_sync: crate::realtime::UserSyncConfig,
     pub(super) commands: mpsc::Receiver<Command>,
     pub(super) events: mpsc::Sender<RealtimeEvent>,
     pub(super) state: watch::Sender<RealtimeState>,
@@ -80,6 +84,7 @@ pub(super) async fn run(input: ActorInput) -> Result<(), RealtimeError> {
         token,
         tokens,
         config,
+        user_sync,
         commands,
         events,
         state,
@@ -88,15 +93,16 @@ pub(super) async fn run(input: ActorInput) -> Result<(), RealtimeError> {
         request_abandoned,
         rate_limits,
     } = input;
-    let established = handshake::establish(
+    let established = handshake::establish(EstablishInput {
         connection_id,
         kind,
-        &url,
-        AuthorizationFence::new(&token, &tokens),
+        url: &url,
+        authorization: AuthorizationFence::new(&token, &tokens),
         config,
-        &cancellation,
-        &rate_limits,
-    )
+        sync_config: &user_sync,
+        cancellation: &cancellation,
+        rate_limits: &rate_limits,
+    })
     .await;
     drop(token);
     drop(tokens);
@@ -156,7 +162,11 @@ impl Actor {
         staged: Vec<ServerMessage>,
     ) -> Result<(), RealtimeError> {
         if let Some(bootstrap) = bootstrap {
-            self.publish_event(RealtimeEventPayload::Bootstrap(bootstrap))?;
+            publish_event(
+                &self.events,
+                self.connection_id,
+                decode::bootstrap(&bootstrap)?,
+            )?;
         }
         for message in staged {
             self.handle_server_message(message)?;
@@ -195,7 +205,8 @@ impl Actor {
                     return Err(RealtimeError::LivenessTimeout);
                 }
                 _ = self.heartbeat.tick() => {
-                    self.advance_heartbeat_deadline()?;
+                    self.heartbeat_deadline =
+                        writer::advance_heartbeat_deadline(self.heartbeat_deadline)?;
                     self.send_heartbeat().await?;
                 }
                 message = self.reader.next() => self.handle_socket(message).await?,
@@ -273,12 +284,13 @@ impl Actor {
                     }
                     None => {}
                 }
-                RealtimeEventPayload::UnmatchedResponse(response)
+                decode::message(ServerMessage::Response(response))?
             }
-            ServerMessage::Event(event) => RealtimeEventPayload::Event(event),
-            ServerMessage::Unknown(raw) => RealtimeEventPayload::Unknown(raw),
+            message @ (ServerMessage::Event(_) | ServerMessage::Unknown(_)) => {
+                decode::message(message)?
+            }
         };
-        self.publish_event(payload)
+        publish_event(&self.events, self.connection_id, payload)
     }
 
     async fn handle_command(&mut self, command: Command) -> Result<(), RealtimeError> {
@@ -337,17 +349,6 @@ impl Actor {
         self.send_message(Message::text(frame)).await
     }
 
-    fn advance_heartbeat_deadline(&mut self) -> Result<(), RealtimeError> {
-        self.heartbeat_deadline = self
-            .heartbeat_deadline
-            .checked_add(writer::HEARTBEAT_PERIOD)
-            .ok_or(RealtimeError::InvalidConfiguration {
-                field: "heartbeat_period",
-                reason: "is too large for a monotonic deadline",
-            })?;
-        Ok(())
-    }
-
     async fn send_message(&mut self, message: Message) -> Result<(), RealtimeError> {
         let operation_deadline = Instant::now()
             .checked_add(self.config.request_deadline())
@@ -374,18 +375,6 @@ impl Actor {
             deadline,
         );
         writer::send(&mut self.writer, Message::text(frame), control).await
-    }
-
-    fn publish_event(&self, payload: RealtimeEventPayload) -> Result<(), RealtimeError> {
-        let event = RealtimeEvent::new(self.connection_id, payload);
-        match self.events.try_send(event) {
-            Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => Err(RealtimeError::ResyncRequired {
-                connection_id: self.connection_id,
-                reason: ResyncReason::EventBufferOverflow,
-            }),
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(RealtimeError::ActorStopped),
-        }
     }
 
     async fn close(&mut self) {

@@ -1,24 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Kevin Monaghan
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
-use jiff::Timestamp;
-use tokio::{net::TcpListener, task::JoinHandle, time};
-use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
+use futures_util::SinkExt;
+use tokio::time;
+use tokio_tungstenite::tungstenite::Message;
 
 use super::*;
-use crate::{
-    Client, EndpointSet, UserId,
-    auth::{InstalledSession, SessionInfo, TokenStore},
-    realtime::{Event, RealtimeEventPayload, RequestId, SocketKind},
+use crate::realtime::{
+    DocumentationBlockedCapability, RealtimeEventPayload, RequestId, SocketKind, UserStreamEvent,
 };
 
 mod authentication;
 mod cancellation;
 mod market_data;
+mod support;
 mod user_sync;
+
+use support::*;
 
 #[tokio::test]
 async fn authorizes_before_requests_and_correlates_mixed_frames() {
@@ -32,7 +32,7 @@ async fn authorizes_before_requests_and_correlates_mixed_frames() {
         assert_eq!(next_text(&mut socket).await, "contract/item\n3\nid=42\n");
         send_text(
             &mut socket,
-            r#"a[{"i":3,"s":200,"d":{"name":"ES"}},{"e":"md","d":{"price":"5000.25"}}]"#,
+            r#"a[{"i":3,"s":200,"d":{"name":"ES"}},{"e":"md","d":{"quotes":[{"timestamp":"2026-08-21T00:00:00Z","contractId":42,"entries":{"Trade":{"price":5000.25,"size":2}}}]}}]"#,
         )
         .await;
         expect_close(&mut socket).await;
@@ -55,7 +55,7 @@ async fn authorizes_before_requests_and_correlates_mixed_frames() {
             .recv_event()
             .await
             .map(RealtimeEvent::into_payload),
-        Some(RealtimeEventPayload::Bootstrap(_))
+        Some(RealtimeEventPayload::User(UserStreamEvent::Bootstrap(_)))
     ));
     let Some(event) = connection.recv_event().await else {
         panic!("mixed frame must publish its event");
@@ -63,7 +63,7 @@ async fn authorizes_before_requests_and_correlates_mixed_frames() {
     assert_eq!(event.connection_id(), connection_id);
     assert!(matches!(
         event.payload(),
-        RealtimeEventPayload::Event(Event::MarketData(Some(_)))
+        RealtimeEventPayload::MarketData(_)
     ));
     assert!(connection.shutdown().await.is_ok());
     join(server).await;
@@ -76,10 +76,14 @@ async fn authorization_stages_event_only_and_co_batched_frames_in_order() {
         let mut socket = accept(listener).await;
         send_text(&mut socket, "o").await;
         let _authorization = next_text(&mut socket).await;
-        send_text(&mut socket, r#"a[{"e":"md","d":{"n":1}}]"#).await;
         send_text(
             &mut socket,
-            r#"a[{"i":1,"s":200},{"e":"chart","d":{"n":2}}]"#,
+            r#"a[{"e":"md","d":{"quotes":[{"timestamp":"2026-08-21T00:00:00Z","contractId":42,"entries":{"Bid":{"price":5000.00,"size":3}}}]}}]"#,
+        )
+        .await;
+        send_text(
+            &mut socket,
+            r#"a[{"i":1,"s":200},{"e":"chart","d":{"charts":[{"id":9,"eoh":true}]}}]"#,
         )
         .await;
         expect_close(&mut socket).await;
@@ -92,14 +96,14 @@ async fn authorization_stages_event_only_and_co_batched_frames_in_order() {
             .recv_event()
             .await
             .map(RealtimeEvent::into_payload),
-        Some(RealtimeEventPayload::Event(Event::MarketData(Some(_))))
+        Some(RealtimeEventPayload::MarketData(_))
     ));
     assert!(matches!(
         connection
             .recv_event()
             .await
             .map(RealtimeEvent::into_payload),
-        Some(RealtimeEventPayload::Event(Event::Chart(Some(_))))
+        Some(RealtimeEventPayload::Chart(_))
     ));
     assert!(connection.shutdown().await.is_ok());
     join(server).await;
@@ -113,7 +117,7 @@ async fn event_overflow_terminates_with_resync_required() {
         authorize(&mut socket).await;
         send_text(
             &mut socket,
-            r#"a[{"e":"md","d":{"n":1}},{"e":"chart","d":{"n":2}}]"#,
+            r#"a[{"e":"md","d":{"quotes":[{"timestamp":"2026-08-21T00:00:00Z","contractId":42,"entries":{"Trade":{"price":5000.25,"size":2}}}]}},{"e":"chart","d":{"charts":[{"id":9,"eoh":true}]}}]"#,
         )
         .await;
     });
@@ -211,7 +215,11 @@ async fn heartbeat_runs_without_application_traffic() {
             panic!("heartbeat must arrive every 2.5 seconds");
         };
         assert_eq!(heartbeat, "[]");
-        send_text(&mut socket, r#"a[{"e":"clock","d":{"t":"now"}}]"#).await;
+        send_text(
+            &mut socket,
+            r#"a[{"e":"props","d":{"entityType":"order","eventType":"Updated","entity":{"id":10,"accountId":20,"contractId":30,"timestamp":"2026-08-21T00:00:00Z","action":"Buy","ordStatus":"Working","admin":false}}}]"#,
+        )
+        .await;
         expect_close(&mut socket).await;
     });
     let client = authenticated_client(&url, "access", None);
@@ -225,7 +233,7 @@ async fn heartbeat_runs_without_application_traffic() {
             .recv_event()
             .await
             .map(RealtimeEvent::into_payload),
-        Some(RealtimeEventPayload::Bootstrap(_))
+        Some(RealtimeEventPayload::User(UserStreamEvent::Bootstrap(_)))
     ));
     let event = time::timeout(Duration::from_secs(4), connection.recv_event()).await;
     assert!(matches!(event, Ok(Some(_))));
@@ -233,137 +241,39 @@ async fn heartbeat_runs_without_application_traffic() {
     join(server).await;
 }
 
-async fn authorize(socket: &mut WebSocketStream<tokio::net::TcpStream>) {
-    send_text(socket, "o").await;
-    let authorization = next_text(socket).await;
-    assert!(authorization.starts_with("authorize\n1\n\n"));
-    send_text(socket, r#"a[{"i":1,"s":200}]"#).await;
-    expect_user_sync(socket).await;
-}
+#[tokio::test]
+async fn documentation_blocked_replay_clock_invalidates_the_generation() {
+    let (listener, url) = bind().await;
+    let server = tokio::spawn(async move {
+        let mut socket = accept(listener).await;
+        send_text(&mut socket, "o").await;
+        let _authorization = next_text(&mut socket).await;
+        send_text(&mut socket, r#"a[{"i":1,"s":200}]"#).await;
+        send_text(&mut socket, r#"a[{"e":"clock","d":{"undocumented":1}}]"#).await;
+    });
+    let client = authenticated_client(&url, "access", None);
+    let mut connection = connect(&client, SocketKind::Replay, RealtimeConfig::default()).await;
 
-async fn expect_user_sync(socket: &mut WebSocketStream<tokio::net::TcpStream>) {
-    let request = next_text(socket).await;
-    assert!(request.starts_with("user/syncrequest\n2\n\n"));
-    assert!(request.contains(r#""splitResponses":false"#));
-    assert!(request.contains(r#""entityTypes":["#));
-    send_text(socket, r#"a[{"i":2,"s":200,"d":{"users":[]}}]"#).await;
-}
-
-async fn await_terminal_state(
-    connection: &mut crate::realtime::RealtimeConnection,
-) -> RealtimeState {
-    loop {
-        let current = connection.state();
-        if !matches!(
-            current,
-            RealtimeState::Connecting { .. } | RealtimeState::Ready { .. }
-        ) {
-            return current;
+    let event = connection.recv_event().await;
+    assert!(matches!(
+        event.map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::DocumentationBlocked(metadata))
+            if metadata.capability() == DocumentationBlockedCapability::ReplayClockPayload
+    ));
+    let state = await_terminal_state(&mut connection).await;
+    assert!(matches!(
+        state,
+        RealtimeState::ResyncRequired {
+            reason: ResyncReason::UnsupportedEvent,
+            ..
         }
-        let changed = time::timeout(Duration::from_secs(1), connection.state_changed()).await;
-        let Ok(Ok(_)) = changed else {
-            panic!("actor must publish a terminal state");
-        };
-    }
-}
-
-async fn connect(
-    client: &Client,
-    kind: SocketKind,
-    config: RealtimeConfig,
-) -> crate::realtime::RealtimeConnection {
-    let result = client.connect_realtime(kind, config).await;
-    let Ok(connection) = result else {
-        panic!("fixture connection must authorize");
-    };
-    connection
-}
-
-fn authenticated_client(url: &str, access: &str, market_data: Option<&str>) -> Client {
-    let endpoints = EndpointSet::custom("http://127.0.0.1:1/v1", url, url, url);
-    let Ok(endpoints) = endpoints else {
-        panic!("fixture endpoints must validate");
-    };
-    let Ok(expires_at) = "2030-01-01T00:00:00Z".parse::<Timestamp>() else {
-        panic!("fixture timestamp must parse");
-    };
-    let Ok(user_id) = UserId::new(1) else {
-        panic!("fixture user ID must validate");
-    };
-    let store = Arc::new(TokenStore::default());
-    let attempt = store.begin_authentication();
-    let session = InstalledSession::try_new(
-        access.to_owned(),
-        market_data.map(str::to_owned),
-        SessionInfo::new(user_id, expires_at, market_data.is_some()),
-    );
-    let Ok(session) = session else {
-        panic!("fixture session must validate");
-    };
-    assert!(attempt.commit(session).is_ok());
-    Client {
-        http: reqwest::Client::new(),
-        endpoints,
-        instance_id: 1,
-        tokens: store,
-        max_response_bytes: 1024,
-        rate_limits: Arc::new(crate::rate_limit::RateGovernor::tradovate_defaults()),
-        mutation_gate: Arc::new(crate::client::MutationGate::default()),
-    }
-}
-
-async fn bind() -> (TcpListener, String) {
-    let listener = TcpListener::bind("127.0.0.1:0").await;
-    let Ok(listener) = listener else {
-        panic!("fixture listener must bind");
-    };
-    let Ok(address) = listener.local_addr() else {
-        panic!("fixture listener must have an address");
-    };
-    (listener, format!("ws://{address}/v1/websocket"))
-}
-
-async fn accept(listener: TcpListener) -> WebSocketStream<tokio::net::TcpStream> {
-    let accepted = listener.accept().await;
-    let Ok((stream, _)) = accepted else {
-        panic!("fixture must accept a TCP connection");
-    };
-    let socket = accept_async(stream).await;
-    let Ok(socket) = socket else {
-        panic!("fixture WebSocket handshake must succeed");
-    };
-    socket
-}
-
-async fn next_text(socket: &mut WebSocketStream<tokio::net::TcpStream>) -> String {
-    let message = socket.next().await;
-    let Some(Ok(Message::Text(text))) = message else {
-        panic!("fixture expected a text message");
-    };
-    text.as_str().to_owned()
-}
-
-async fn expect_close(socket: &mut WebSocketStream<tokio::net::TcpStream>) {
-    let message = time::timeout(Duration::from_secs(1), socket.next()).await;
-    assert!(matches!(message, Ok(Some(Ok(Message::Close(_))) | None)));
-}
-
-async fn send_text(socket: &mut WebSocketStream<tokio::net::TcpStream>, text: &str) {
-    send_message(socket, Message::text(text)).await;
-}
-
-async fn send_message(socket: &mut WebSocketStream<tokio::net::TcpStream>, message: Message) {
-    assert!(socket.send(message).await.is_ok());
-}
-
-async fn join(handle: JoinHandle<()>) {
-    assert!(handle.await.is_ok());
-}
-
-async fn join_value<T>(handle: JoinHandle<T>) -> T {
-    let result = handle.await;
-    let Ok(value) = result else {
-        panic!("fixture server task must complete");
-    };
-    value
+    ));
+    assert!(matches!(
+        connection.shutdown().await,
+        Err(RealtimeError::ResyncRequired {
+            reason: ResyncReason::UnsupportedEvent,
+            ..
+        })
+    ));
+    join(server).await;
 }

@@ -9,6 +9,40 @@ use thiserror::Error;
 
 use super::{CodecError, ConnectionId, DisconnectReason, RequestId, ResyncReason, SocketKind};
 
+/// The typed event family whose payload was invalid.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RealtimeEventKind {
+    /// Initial user synchronization data.
+    Bootstrap,
+    /// A user entity property delta.
+    Properties,
+    /// A graceful provider shutdown event.
+    Shutdown,
+    /// Quote, depth, or histogram data.
+    MarketData,
+    /// Regular-bar or tick-chart data.
+    Chart,
+    /// A future or otherwise unsupported event family.
+    Unsupported,
+}
+
+/// Stable, secret-safe reasons for rejecting a realtime payload.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RealtimePayloadError {
+    /// A required `d` payload or required field was absent.
+    MissingData,
+    /// The payload did not match its documented JSON shape.
+    Malformed,
+    /// A named collection or text ceiling was exceeded.
+    LimitExceeded,
+    /// A provider identity, date, timestamp, or exact number was invalid.
+    InvalidValue,
+    /// A full depth packet was not ordered as documented.
+    InvalidOrder,
+}
+
 /// Failures returned by real-time connection and request operations.
 ///
 /// Variants retain only structural metadata. Bearer tokens, request bodies,
@@ -69,6 +103,28 @@ pub enum RealtimeError {
     /// The user-sync response did not contain a complete snapshot object.
     #[error("user synchronization returned an invalid bootstrap payload")]
     UserSyncInvalidBootstrap,
+    /// A server event failed its typed bounded wire contract.
+    #[error("invalid {kind:?} realtime payload: {reason:?}")]
+    InvalidEvent {
+        /// Event family that failed validation.
+        kind: RealtimeEventKind,
+        /// Stable validation category.
+        reason: RealtimePayloadError,
+    },
+    /// A typed realtime request is invalid.
+    #[error("invalid realtime request field {field}: {reason}")]
+    InvalidRequest {
+        /// Invalid request field.
+        field: &'static str,
+        /// Stable validation reason.
+        reason: &'static str,
+    },
+    /// A successful correlated response did not match its typed operation schema.
+    #[error("{operation} returned an invalid typed response")]
+    InvalidTypedResponse {
+        /// Public-safe provider operation name.
+        operation: &'static str,
+    },
     /// The provider declined user sync with a penalty control response.
     #[error("user synchronization is rate-limited for {retry_after:?}")]
     UserSyncPenalty {
@@ -200,7 +256,9 @@ impl RealtimeError {
             Self::LivenessTimeout => DisconnectReason::LivenessTimeout,
             Self::RequestTimeout { .. } => DisconnectReason::RequestTimeout,
             Self::ServerClosed => DisconnectReason::ServerClosed,
-            Self::Protocol | Self::Codec(_) => DisconnectReason::Protocol,
+            Self::Protocol | Self::Codec(_) | Self::InvalidEvent { .. } => {
+                DisconnectReason::Protocol
+            }
             Self::ActorStopped | Self::ActorTaskFailed => DisconnectReason::ActorStopped,
             Self::InvalidConfiguration { .. }
             | Self::Unauthenticated
@@ -208,6 +266,8 @@ impl RealtimeError {
             | Self::ConnectTimeout
             | Self::OpenTimeout
             | Self::Transport
+            | Self::InvalidRequest { .. }
+            | Self::InvalidTypedResponse { .. }
             | Self::LocalRateLimit { .. }
             | Self::PendingLimitReached { .. }
             | Self::RequestQueueTimeout

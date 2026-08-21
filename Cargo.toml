@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 publish = false
-description = "Private, exact-decimal Rust client for the Tradovate REST API"
+description = "Private, exact-decimal Rust client for current Tradovate REST and realtime APIs"
 repository = "https://github.com/SharurTrading/tradovate-rs"
 license = "LicenseRef-Proprietary"
 

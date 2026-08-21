@@ -60,8 +60,6 @@ pub(crate) struct AccessTokenResponse {
     pub(crate) md_access_token: Option<String>,
     pub(crate) expiration_time: Timestamp,
     pub(crate) user_id: UserId,
-    #[serde(default)]
-    pub(crate) has_market_data: bool,
 }
 
 impl ControlWireResponse for AccessTokenResponse {

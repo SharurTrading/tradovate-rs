@@ -5,30 +5,85 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicU8, Ordering},
 };
 
 use super::Client;
 use crate::Error;
 
-/// Endpoint wire responses expose provider-success evidence before a control
-/// response can be treated as a definitive rejection.
-pub(crate) trait MutationWireResponse {
+/// Resolution category derived from one endpoint's documented response contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MutationOutcome {
+    /// The response contains every field required to prove provider acceptance.
+    Success,
+    /// The response definitively proves that the provider rejected the request.
+    Rejected,
+    /// The response is contradictory or lacks evidence required for resolution.
+    Ambiguous,
+}
+
+/// Request-aware interpretation of one decoded mutation response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct MutationAssessment {
+    outcome: MutationOutcome,
+    success_evidence: bool,
+}
+
+impl MutationAssessment {
+    pub(crate) const fn success() -> Self {
+        Self {
+            outcome: MutationOutcome::Success,
+            success_evidence: true,
+        }
+    }
+
+    pub(crate) const fn rejected() -> Self {
+        Self {
+            outcome: MutationOutcome::Rejected,
+            success_evidence: false,
+        }
+    }
+
+    pub(crate) const fn ambiguous(success_evidence: bool) -> Self {
+        Self {
+            outcome: MutationOutcome::Ambiguous,
+            success_evidence,
+        }
+    }
+
+    pub(crate) const fn outcome(self) -> MutationOutcome {
+        self.outcome
+    }
+
+    pub(crate) const fn has_success_evidence(self) -> bool {
+        self.success_evidence
+    }
+}
+
+/// A documented mutation response validates both control contradictions and
+/// endpoint-specific completion evidence before its attempt may be resolved.
+pub(crate) trait DocumentedMutationResponse {
+    fn mutation_outcome(&self) -> MutationOutcome;
+
     fn has_success_evidence(&self) -> bool;
 }
 
 /// Shared fail-closed state for all clones of one client.
+const AVAILABLE: u8 = 0;
+const IN_FLIGHT: u8 = 1;
+const RECONCILIATION_REQUIRED: u8 = 2;
+
 #[derive(Debug, Default)]
 pub(crate) struct MutationGate {
-    reconciliation_required: AtomicBool,
+    state: AtomicU8,
 }
 
 impl MutationGate {
     pub(crate) fn ensure_available(&self, endpoint: &'static str) -> Result<(), Error> {
-        if self.reconciliation_required.load(Ordering::Acquire) {
-            Err(Error::MutationReconciliationRequired { endpoint })
-        } else {
-            Ok(())
+        match self.state.load(Ordering::Acquire) {
+            AVAILABLE => Ok(()),
+            IN_FLIGHT => Err(Error::MutationInProgress { endpoint }),
+            _ => Err(Error::MutationReconciliationRequired { endpoint }),
         }
     }
 
@@ -36,20 +91,32 @@ impl MutationGate {
         self: &Arc<Self>,
         endpoint: &'static str,
     ) -> Result<MutationAttempt, Error> {
-        self.ensure_available(endpoint)?;
-        Ok(MutationAttempt {
-            gate: Arc::clone(self),
-            endpoint,
-            armed: false,
-        })
+        match self
+            .state
+            .compare_exchange(AVAILABLE, IN_FLIGHT, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => Ok(MutationAttempt {
+                gate: Arc::clone(self),
+                endpoint,
+                armed: false,
+                released: false,
+            }),
+            Err(IN_FLIGHT) => Err(Error::MutationInProgress { endpoint }),
+            Err(_) => Err(Error::MutationReconciliationRequired { endpoint }),
+        }
     }
 
     fn acknowledge(&self) {
-        self.reconciliation_required.store(false, Ordering::Release);
+        let _ = self.state.compare_exchange(
+            RECONCILIATION_REQUIRED,
+            AVAILABLE,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
     }
 
     fn is_reconciliation_required(&self) -> bool {
-        self.reconciliation_required.load(Ordering::Acquire)
+        self.state.load(Ordering::Acquire) == RECONCILIATION_REQUIRED
     }
 }
 
@@ -59,12 +126,17 @@ pub(crate) struct MutationAttempt {
     gate: Arc<MutationGate>,
     endpoint: &'static str,
     armed: bool,
+    released: bool,
 }
 
 impl MutationAttempt {
     /// Arms immediately before the HTTP send future is first polled.
     pub(crate) fn arm(&mut self) -> Result<(), Error> {
-        self.gate.ensure_available(self.endpoint)?;
+        if self.gate.state.load(Ordering::Acquire) != IN_FLIGHT || self.released {
+            return Err(Error::MutationReconciliationRequired {
+                endpoint: self.endpoint,
+            });
+        }
         self.armed = true;
         Ok(())
     }
@@ -72,16 +144,22 @@ impl MutationAttempt {
     /// Records a provider-confirmed success or definitive rejection.
     pub(crate) fn resolve(mut self) {
         self.armed = false;
+        self.released = true;
+        self.gate.state.store(AVAILABLE, Ordering::Release);
     }
 }
 
 impl Drop for MutationAttempt {
     fn drop(&mut self) {
-        if self.armed {
-            self.gate
-                .reconciliation_required
-                .store(true, Ordering::Release);
+        if self.released {
+            return;
         }
+        let next = if self.armed {
+            RECONCILIATION_REQUIRED
+        } else {
+            AVAILABLE
+        };
+        self.gate.state.store(next, Ordering::Release);
     }
 }
 
@@ -160,5 +238,33 @@ mod tests {
             .unwrap_or_else(|error| panic!("attempt must arm: {error}"));
         attempt.resolve();
         assert!(!gate.is_reconciliation_required());
+    }
+
+    #[test]
+    fn only_one_clone_can_own_an_in_flight_mutation() {
+        let gate = Arc::new(MutationGate::default());
+        let first = gate
+            .attempt("/order/placeorder")
+            .unwrap_or_else(|error| panic!("first attempt must claim the gate: {error}"));
+        assert!(matches!(
+            gate.attempt("/order/cancelorder"),
+            Err(Error::MutationInProgress { .. })
+        ));
+        drop(first);
+        assert!(gate.attempt("/order/cancelorder").is_ok());
+    }
+
+    #[test]
+    fn acknowledgement_cannot_clear_an_in_flight_claim() {
+        let gate = Arc::new(MutationGate::default());
+        let first = gate
+            .attempt("/order/placeorder")
+            .unwrap_or_else(|error| panic!("first attempt must claim the gate: {error}"));
+        gate.acknowledge();
+        assert!(matches!(
+            gate.attempt("/order/cancelorder"),
+            Err(Error::MutationInProgress { .. })
+        ));
+        drop(first);
     }
 }

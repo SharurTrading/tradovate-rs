@@ -48,6 +48,17 @@ pub(super) struct Established {
     pub(super) next_request_id: u64,
 }
 
+pub(super) struct EstablishInput<'a> {
+    pub(super) connection_id: ConnectionId,
+    pub(super) kind: SocketKind,
+    pub(super) url: &'a str,
+    pub(super) authorization: AuthorizationFence<'a>,
+    pub(super) config: RealtimeConfig,
+    pub(super) sync_config: &'a crate::realtime::UserSyncConfig,
+    pub(super) cancellation: &'a CancellationToken,
+    pub(super) rate_limits: &'a RateGovernor,
+}
+
 #[derive(Clone, Copy)]
 struct ResponseWait<'a> {
     connection_id: ConnectionId,
@@ -59,15 +70,17 @@ struct ResponseWait<'a> {
     staged_limit: usize,
 }
 
-pub(super) async fn establish(
-    connection_id: ConnectionId,
-    kind: SocketKind,
-    url: &str,
-    authorization: AuthorizationFence<'_>,
-    config: RealtimeConfig,
-    cancellation: &CancellationToken,
-    rate_limits: &RateGovernor,
-) -> Result<Established, RealtimeError> {
+pub(super) async fn establish(input: EstablishInput<'_>) -> Result<Established, RealtimeError> {
+    let EstablishInput {
+        connection_id,
+        kind,
+        url,
+        authorization,
+        config,
+        sync_config,
+        cancellation,
+        rate_limits,
+    } = input;
     let codec = FrameCodec::new(
         config.frame_bytes_limit(),
         config.messages_per_frame_limit(),
@@ -130,22 +143,15 @@ pub(super) async fn establish(
     .await?;
     validate_authorization(&authorization, rate_limits)?;
     let (bootstrap, next_request_id) = if matches!(kind, SocketKind::User) {
-        let sync_deadline = deadline(config.request_deadline())?;
+        let wait = user_sync_wait(connection_id, codec, config, cancellation, staged_limit)?;
         let (bootstrap, next_request_id) = user_sync::perform(
             &mut socket,
             &mut heartbeat,
             &mut heartbeat_deadline,
             rate_limits,
+            sync_config,
             &mut staged,
-            ResponseWait {
-                connection_id,
-                codec,
-                request_id: RequestId::new(2),
-                deadline: sync_deadline,
-                timeout_error: RealtimeError::UserSyncTimeout,
-                cancellation,
-                staged_limit,
-            },
+            wait,
         )
         .await?;
         (Some(bootstrap), next_request_id)
@@ -161,6 +167,24 @@ pub(super) async fn establish(
         bootstrap,
         staged,
         next_request_id,
+    })
+}
+
+fn user_sync_wait(
+    connection_id: ConnectionId,
+    codec: FrameCodec,
+    config: RealtimeConfig,
+    cancellation: &CancellationToken,
+    staged_limit: usize,
+) -> Result<ResponseWait<'_>, RealtimeError> {
+    Ok(ResponseWait {
+        connection_id,
+        codec,
+        request_id: RequestId::new(2),
+        deadline: deadline(config.request_deadline())?,
+        timeout_error: RealtimeError::UserSyncTimeout,
+        cancellation,
+        staged_limit,
     })
 }
 

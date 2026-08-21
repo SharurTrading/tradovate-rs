@@ -7,6 +7,10 @@
 
 /target
 
+# Local generator/runtime caches.
+__pycache__/
+*.py[cod]
+
 # Local credentials and operator configuration. Only deliberately synthetic
 # examples named `.env.example` may be committed.
 .env

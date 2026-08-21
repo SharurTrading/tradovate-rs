@@ -69,13 +69,25 @@ fn unsupported_penalty_retry_discards_the_ticket() {
 
 #[test]
 fn provider_429_never_shortens_the_official_one_hour_penalty() {
-    assert_eq!(official_429_cooldown(None), Duration::from_hours(1));
+    let rates = crate::rate_limit::RateGovernor::tradovate_defaults();
+    assert_eq!(apply_429_cooldown(&rates, None), Duration::from_hours(1));
+    let rates = crate::rate_limit::RateGovernor::tradovate_defaults();
     assert_eq!(
-        official_429_cooldown(Some(Duration::from_secs(1))),
+        apply_429_cooldown(&rates, Some(Duration::from_secs(1))),
         Duration::from_hours(1)
     );
+    let rates = crate::rate_limit::RateGovernor::tradovate_defaults();
     assert_eq!(
-        official_429_cooldown(Some(Duration::from_hours(2))),
+        apply_429_cooldown(&rates, Some(Duration::from_hours(2))),
         Duration::from_hours(2)
+    );
+}
+
+#[test]
+fn endpoint_specific_operations_cannot_shorten_a_global_429_stop() {
+    let rates = crate::rate_limit::RateGovernor::tradovate_defaults();
+    assert_eq!(
+        apply_429_cooldown(&rates, Some(Duration::from_secs(1))),
+        Duration::from_hours(1)
     );
 }

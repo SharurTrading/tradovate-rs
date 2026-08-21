@@ -66,7 +66,6 @@ async fn authenticated_client(server: &MockServer) -> Client {
                 "mdAccessToken": "synthetic-market-token",
                 "expirationTime": "2035-08-21T01:30:00Z",
                 "userId": 7,
-                "hasMarketData": true
             }));
         })
         .await;
@@ -111,20 +110,23 @@ async fn authentication_and_account_query_match_wire_contract() {
             then.status(200)
                 .header("content-type", "application/json")
                 .body(
-                    r#"[{"id":42,"name":"SYNTHETIC","userId":7,"accountType":"Customer","active":true,"timestamp":"2026-08-21T00:00:00Z","evaluationSize":123456789.123456789,"readonly":false}]"#,
+                    r#"[{"id":42,"name":"SYNTHETIC","userId":7,"accountType":"Customer","clearingHouseId":1,"riskCategoryId":2,"autoLiqProfileId":3,"marginAccountType":"Speculator","legalStatus":"Individual","timestamp":"2026-08-21T00:00:00Z","evaluationSize":123456789.123456789,"readonly":false}]"#,
                 );
         })
         .await;
     let client = authenticated_client(&server).await;
     let result = client
-        .list_accounts()
+        .account_list()
         .await
         .unwrap_or_else(|error| panic!("account query must succeed: {error}"));
     accounts.assert_async().await;
     assert_eq!(result.len(), 1);
-    assert_eq!(result[0].id.get(), 42);
+    assert_eq!(result[0].id().map(|id| id.get()), Some(42));
     assert_eq!(
-        result[0].evaluation_size.map(|value| value.scale()),
+        result[0]
+            .evaluation_size()
+            .copied()
+            .map(|value| value.scale()),
         Some(9)
     );
 }

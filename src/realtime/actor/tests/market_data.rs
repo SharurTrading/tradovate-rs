@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 use super::*;
-use crate::{Symbol, realtime::MarketDataChannel};
+use crate::{ContractId, Symbol, realtime::MarketDataChannel};
+use tokio_tungstenite::WebSocketStream;
 
 #[tokio::test]
-async fn typed_market_data_commands_encode_validated_symbols() {
+async fn typed_market_data_commands_encode_symbols_and_contract_ids() {
     let (listener, url) = bind().await;
     let server = tokio::spawn(async move {
         let mut socket = accept(listener).await;
@@ -20,11 +21,23 @@ async fn typed_market_data_commands_encode_validated_symbols() {
             "md/unsubscribeQuote\n3\n\n{\"symbol\":\"ESZ6\"}"
         );
         send_text(&mut socket, r#"a[{"i":3,"s":200}]"#).await;
+        assert_eq!(
+            next_text(&mut socket).await,
+            "md/subscribeDOM\n4\n\n{\"symbol\":42}"
+        );
+        send_text(&mut socket, r#"a[{"i":4,"s":200}]"#).await;
+        assert_eq!(
+            next_text(&mut socket).await,
+            "md/unsubscribeDOM\n5\n\n{\"symbol\":42}"
+        );
+        send_text(&mut socket, r#"a[{"i":5,"s":200}]"#).await;
         expect_close(&mut socket).await;
     });
     let client = authenticated_client(&url, "access", Some("market-data"));
     let connection = connect(&client, SocketKind::MarketData, RealtimeConfig::default()).await;
     let symbol = Symbol::new("ESZ6").unwrap_or_else(|error| panic!("fixture symbol: {error}"));
+    let contract_id =
+        ContractId::new(42).unwrap_or_else(|error| panic!("fixture contract ID: {error}"));
 
     assert!(
         connection
@@ -35,6 +48,18 @@ async fn typed_market_data_commands_encode_validated_symbols() {
     assert!(
         connection
             .unsubscribe_market_data(MarketDataChannel::Quotes, &symbol)
+            .await
+            .is_ok()
+    );
+    assert!(
+        connection
+            .subscribe_market_data(MarketDataChannel::DepthOfMarket, &contract_id)
+            .await
+            .is_ok()
+    );
+    assert!(
+        connection
+            .unsubscribe_market_data(MarketDataChannel::DepthOfMarket, &contract_id)
             .await
             .is_ok()
     );

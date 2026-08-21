@@ -11,9 +11,13 @@ use super::{Client, allocate_client_instance_id, mutation::MutationGate};
 use crate::{ConfigError, EndpointSet, Error, auth::TokenStore, rate_limit::RateGovernor};
 
 const DEFAULT_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+// The current customer-document contract permits an 8 MiB data field; the
+// encoded JSON envelope needs bounded headroom beyond that field itself.
+const DEFAULT_MAX_REQUEST_BYTES: usize = 12 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HARD_MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+const HARD_MAX_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 const HARD_MAX_REQUEST_TIMEOUT: Duration = Duration::from_mins(5);
 const HARD_MAX_CONNECT_TIMEOUT: Duration = Duration::from_mins(2);
 
@@ -22,6 +26,7 @@ const HARD_MAX_CONNECT_TIMEOUT: Duration = Duration::from_mins(2);
 #[derive(Clone, Debug)]
 pub struct ClientBuilder {
     endpoints: EndpointSet,
+    max_request_bytes: usize,
     max_response_bytes: usize,
     request_timeout: Duration,
     connect_timeout: Duration,
@@ -31,6 +36,7 @@ impl ClientBuilder {
     pub(crate) const fn new(endpoints: EndpointSet) -> Self {
         Self {
             endpoints,
+            max_request_bytes: DEFAULT_MAX_REQUEST_BYTES,
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
@@ -40,6 +46,12 @@ impl ClientBuilder {
     /// Sets the absolute decoded REST body ceiling.
     pub const fn max_response_bytes(mut self, bytes: usize) -> Self {
         self.max_response_bytes = bytes;
+        self
+    }
+
+    /// Sets the absolute encoded REST request-body ceiling.
+    pub const fn max_request_bytes(mut self, bytes: usize) -> Self {
+        self.max_request_bytes = bytes;
         self
     }
 
@@ -65,6 +77,20 @@ impl ClientBuilder {
     /// Returns [`Error::Configuration`] for zero limits/timeouts, or a
     /// transport builder error when TLS initialization fails.
     pub fn build(self) -> Result<Client, Error> {
+        if self.max_request_bytes == 0 {
+            return Err(ConfigError::InvalidSetting {
+                field: "max_request_bytes",
+                reason: "must be positive",
+            }
+            .into());
+        }
+        if self.max_request_bytes > HARD_MAX_REQUEST_BYTES {
+            return Err(ConfigError::InvalidSetting {
+                field: "max_request_bytes",
+                reason: "must not exceed 64 MiB",
+            }
+            .into());
+        }
         if self.max_response_bytes == 0 {
             return Err(ConfigError::InvalidSetting {
                 field: "max_response_bytes",
@@ -124,6 +150,7 @@ impl ClientBuilder {
             tokens: Arc::new(TokenStore::default()),
             rate_limits: Arc::new(RateGovernor::tradovate_defaults()),
             mutation_gate: Arc::new(MutationGate::default()),
+            max_request_bytes: self.max_request_bytes,
             max_response_bytes: self.max_response_bytes,
         })
     }

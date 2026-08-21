@@ -30,6 +30,7 @@ Install `cargo-nextest`, `cargo-deny`, `cargo-audit`, and Gitleaks using approve
 versions, then run from the repository root:
 
 ```text
+python3 tools/generate_openapi.py --check
 cargo fmt --all -- --check
 bash scripts/ci/check_file_sizes.sh
 cargo check --no-default-features --locked

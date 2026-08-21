@@ -37,8 +37,7 @@ mod rate_limit;
 pub mod api;
 pub mod auth;
 pub mod client;
-#[cfg(test)]
-mod realtime;
+pub mod realtime;
 
 pub use client::{Client, ClientBuilder};
 pub use environment::{EndpointSet, Environment};

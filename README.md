@@ -18,28 +18,38 @@ This repository is proprietary to Kevin Monaghan and hosted privately under
 by, or sponsored by Tradovate. Provider access and use remain subject to Tradovate's
 terms and entitlements.
 
-Use the official [Tradovate API documentation](https://api.tradovate.com/) as the
-authority for endpoints, request fields, authentication, rate limits, realtime
-messages, and account permissions. Repository documentation records the additional
-safety and lifecycle guarantees supplied by this client.
+The sole REST implementation authority is the current
+[Tradovate Partner OpenAPI](https://partner.tradovate.com/openapi.json), pinned in
+this repository with its retrieval date and digest. Repository documentation records
+the additional safety and lifecycle guarantees supplied by this client.
 
 ## Status
 
-The initial vertical slice is implemented, but this is not a complete binding for
-Tradovate's API.
+The pinned current Partner REST contract is inventoried operation-for-operation.
+Every operation is either callable through a typed reviewed surface or carries an
+explicit documentation-blocked record. A manifest entry or generated model does not
+by itself make a state-changing operation callable.
 
 | Capability | Current coverage |
 | --- | --- |
-| Authentication | Direct API-key login, expiry/revision-fenced renewal, redacted session metadata, and client-bound delayed penalty retry |
-| REST queries | Account list, contract find, position list, and order list |
-| REST commands | Validated order placement/cancellation, no automatic retry, and a shared reconciliation latch after ambiguity |
-| Realtime transport | Test-only architecture harness for bounded framing, authorization, request correlation, heartbeat, lifecycle state, and user bootstrap; excluded from the production facade |
-| Market data | Test-only typed command fixtures; production subscription and event APIs are deferred |
+| Authentication | Direct API-key login, OAuth token exchange plus `/auth/me`, expiry/revision-fenced renewal, redacted session metadata, and client-bound delayed penalty retry |
+| Current REST contract | All 350 operations and all 278 component schemas in the 2026-08-21 Partner OpenAPI pin |
+| Operation classes | 271 query, 73 mutation, and 6 lifecycle operations |
+| Public surfaces | 263 generated query methods, 71 reviewed specialized methods, 0 modeled-only operations, and 16 explicit documentation-blocked operations |
+| Response contracts | 338 typed, 11 unspecified by the pin, and 1 incomplete in the pin |
+| Callable documented operations | 334 typed operations: 333 direct REST methods plus `/user/syncrequest` owned by the realtime lifecycle; every non-callable row has a provider-contract blocker in the exhaustive manifest |
+| Realtime transport | Production-public bounded, generation-fenced connection with typed user, shutdown, market-data, chart, and recovery events |
+| Market data | Quote/DOM/histogram subscriptions by `Symbol` or `ContractId`, exact typed payloads, validated chart requests/cancellation, bars, and checked compact ticks |
 
-Remaining REST endpoints, the public typed realtime API, chart and replay commands,
-configurable/split user synchronization, automatic reconnect, subscription replay,
-and live probes are deliberately deferred. Feature coverage must change alongside
-each implementation slice.
+The 16 REST blockers cannot become safe callable operations until Tradovate publishes
+the missing request, response, or completion evidence identified for each row.
+Configurable B2B split synchronization and replay control/clock payloads are also
+withheld because the current Partner documentation omits their completion or payload
+contracts; `realtime::DOCUMENTATION_BLOCKED_CAPABILITIES` records that boundary. A
+documented mutation is exposed only after its request validation and
+success/rejection evidence have been reviewed. Public typed realtime coverage, its
+documented gaps, and recovery responsibilities are tracked separately from the REST
+manifest.
 
 ## Design goals
 
@@ -54,6 +64,8 @@ each implementation slice.
 - Generation-fenced realtime lifecycle and explicit transport-gap recovery.
 - Tradovate SockJS-derived framing, request correlation, heartbeat, and user bootstrap.
 - Typed HTTP-200 business failures and provider penalty-ticket handling.
+- Deterministic generation from one hash-pinned current Partner OpenAPI snapshot.
+- A public, exhaustive operation manifest for coverage and audit tooling.
 - Deterministic synthetic tests; any future live probe must be deliberate, ignored,
   and read-only.
 
@@ -96,8 +108,13 @@ src/
   auth/                  credentials and revision-fenced session state
   client/                builder and shared HTTP execution policy
   rate_limit/            shared provider admission and cooldown state
-  api/                   account, contract, order, and position capabilities
+  api/current/           complete current Partner REST surface by capability
+    generated/           checked-in models, builders, methods, and manifest
+    mutations/           reviewed state-changing and lifecycle implementations
   realtime/              connection, codec, lifecycle, events, flow control
+    user_stream/         typed bootstrap and provider entity deltas
+    market_data/         exact quote, DOM, and histogram payloads
+    chart/               validated requests, bars, and compact ticks
 ```
 
 The crate owns provider transport and provider-native wire contracts. Consuming
@@ -137,12 +154,55 @@ further mutations. Queries remain available for reconciling current orders, fill
 and positions. Only after authoritative reconciliation should a caller invoke
 `Client::acknowledge_mutation_reconciliation` and permit another submission.
 
+The current surface is generated into capability modules under
+`api::current::{accounting, alerts, authentication, configuration, contracts, fees,
+funds, orders, positions, risks, users}`. Financial `number` tokens decode directly
+to `Decimal`; provider identities are validated newtypes; request secrets have
+redacted `Debug` and no public getter; and response enums preserve unknown provider
+values while refusing to serialize those unknown values back into a request.
+
+Generated query methods do not own transport policy. GET and safe POST queries use
+the bounded query path. A state-changing operation becomes callable only through a
+reviewed handwritten path with single-attempt mutation policy and endpoint-specific
+completion evidence; schema presence alone is insufficient. Request bodies,
+response bodies, query cardinality, and query size are bounded before or during
+transport. No public API accepts an arbitrary endpoint, command string, or raw JSON
+response.
+
+The exhaustive manifest records 16 `DocumentationBlocked` operations. Eleven have no
+published response schema, one has an incomplete response schema, and other blocked
+rows lack the request or completion evidence needed to call them without guessing.
+None has a raw JSON escape hatch or invented success contract. See
+[`docs/api-coverage-rest.md`](docs/api-coverage-rest.md) for the exact rows and
+provider blockers.
+
+### Rate admission
+
+The pinned OpenAPI defines which current operations exist; the current Partner
+[rate-limit table](https://partner.tradovate.com/overview/core-concepts/rate-limits),
+verified 2026-08-22, is the operational authority for their quotas. In particular,
+`submitpartnersubaccountdocument` uses the table's current 750/hour all-request
+budget rather than the stale 10/hour prose embedded in that operation's pinned
+description. Failed-response-only reservations cover `auth/me`, both evaluation
+batch endpoints, and `requesttradingpermission` in addition to direct login.
+
+Admission is shared by every clone and is atomic across user, endpoint, and demo
+account scopes. A proven pre-send failure rolls those reservations back. Once send
+may have started, cancellation or ambiguous transport conservatively retains every
+all-request charge and records a failed-only charge, so local concurrency cannot
+overrun the provider. Demo balance changes enforce both the current 1,000/hour
+aggregate endpoint budget and the stricter one-change-per-account-per-hour guard;
+the latter stays conservative because the client cannot infer the caller's
+organization-admin exemption. Any HTTP or WebSocket 429 installs the documented
+global one-hour minimum stop; endpoint penalty tickets instead use their exact
+provider `p-time`.
+
 ### Realtime execution
 
-The test-only realtime architecture harness does not consider a connection ready
+The production realtime transport does not consider a connection ready
 until authentication and protocol negotiation succeed. Frames have both byte and
 message-count ceilings; queue and pending-reply capacities also obey aggregate byte
-budgets. Each connection is exactly one immutable generation; the harness does not
+budgets. Each connection is exactly one immutable generation; the transport does not
 automatically reconnect it.
 
 The transport deliberately owns no canonical subscription or account projection.
@@ -166,11 +226,20 @@ and in the same frame as user sync are staged; the validated bootstrap is always
 delivered before those deltas and before readiness is published. A validated penalty
 installs the full monotonic cooldown and ends setup with a typed error; the foundation
 does not retry user synchronization automatically.
-The initial user-sync profile uses a fixed entity list and `splitResponses: false`;
-configurable entity selection, sharding, and multipart bootstrap completion are not
-yet implemented. The harness is compiled only for crate unit tests, raw envelopes are
-never part of the production crate, and public realtime access is withheld until each
-exposed capability has bounded typed event models.
+The default user-sync profile explicitly requests all 31 entity families in the
+pinned current `SyncMessage` schema with `splitResponses: false`. A validated
+`UserSyncConfig` also supports the documented user/account filters, cutoff timestamp,
+closed `modAccountId`/`modUserId` sharding grammar, entity-family selection, and
+`fullOrgSnapshot` flag while rejecting forbidden field combinations locally. The
+bootstrap must contain the pin-required `users` and `contractGroups` collections
+before readiness. Only B2B multipart completion remains documentation blocked.
+Public events contain no raw JSON values: known user entities and the documented
+`OtherEnvAdminAlertSignal` signature event reuse current typed REST models; quotes,
+DOM, histograms, bars, and ticks cross the boundary as exact `Decimal` values.
+Malformed, partial, oversized, or semantically unknown payloads end the generation
+rather than publishing partial truth. The complete public surface and its explicit
+documentation boundaries are recorded in
+[`docs/api-coverage-realtime.md`](docs/api-coverage-realtime.md).
 
 ## Official protocol references
 
@@ -195,6 +264,7 @@ rules used for implementation and review.
 The normal local gate is:
 
 ```text
+python3 tools/generate_openapi.py --check
 cargo fmt --all -- --check
 bash scripts/ci/check_file_sizes.sh
 cargo check --no-default-features --locked
@@ -206,6 +276,11 @@ cargo deny --locked check
 cargo audit --file Cargo.lock --deny warnings
 gitleaks git --no-banner --redact --log-opts="--all" .
 ```
+
+Regenerate the checked-in current surface with
+`python3 tools/generate_openapi.py`. The generator refuses a snapshot whose SHA-256
+does not match the reviewed constant, and `--check` fails when generated output is
+stale. Never hand-edit files under `src/api/current/generated/`.
 
 The secret scan requires Git history and is authoritative in CI.
 

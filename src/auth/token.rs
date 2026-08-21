@@ -3,6 +3,8 @@
 
 //! Revision-fenced bearer-session storage.
 
+mod validation;
+
 use std::{
     fmt,
     sync::{
@@ -16,6 +18,7 @@ use parking_lot::Mutex;
 use secrecy::{ExposeSecret, SecretString};
 
 use crate::{Error, UserId};
+use validation::is_valid_bearer_token;
 
 /// Non-secret metadata for the installed Tradovate session.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -111,26 +114,6 @@ impl InstalledSession {
     }
 }
 
-fn is_valid_bearer_token(token: &str) -> bool {
-    if token.is_empty() {
-        return false;
-    }
-    let mut padding_started = false;
-    let mut token_character_seen = false;
-    let valid = token.bytes().all(|byte| {
-        if byte == b'=' {
-            padding_started = true;
-            true
-        } else {
-            let allowed = byte.is_ascii_alphanumeric()
-                || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'+' | b'/');
-            token_character_seen |= allowed;
-            !padding_started && allowed
-        }
-    });
-    valid && token_character_seen
-}
-
 impl fmt::Debug for InstalledSession {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -148,18 +131,26 @@ impl fmt::Debug for InstalledSession {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TokenKind {
     Access,
-    #[cfg(test)]
     MarketData,
 }
 
 pub(crate) struct TokenSnapshot {
     token: SecretString,
     revision: u128,
+    user_id: UserId,
 }
 
 impl TokenSnapshot {
     pub(crate) fn expose(&self) -> &str {
         self.token.expose_secret()
+    }
+
+    pub(crate) const fn has_same_revision(&self, other: &Self) -> bool {
+        self.revision == other.revision
+    }
+
+    pub(crate) const fn user_id(&self) -> UserId {
+        self.user_id
     }
 }
 
@@ -169,6 +160,7 @@ impl fmt::Debug for TokenSnapshot {
             .debug_struct("TokenSnapshot")
             .field("token", &"[REDACTED]")
             .field("revision", &self.revision)
+            .field("user_id", &self.user_id)
             .finish()
     }
 }
@@ -217,7 +209,6 @@ impl TokenStore {
         let session = state.session.as_ref().ok_or(Error::Unauthenticated)?;
         let token = match kind {
             TokenKind::Access => &session.access_token,
-            #[cfg(test)]
             TokenKind::MarketData => session
                 .market_data_token
                 .as_ref()
@@ -226,6 +217,7 @@ impl TokenStore {
         Ok(TokenSnapshot {
             token: SecretString::from(token.expose_secret().to_owned()),
             revision: state.revision,
+            user_id: session.info.user_id,
         })
     }
 
@@ -322,6 +314,10 @@ impl RenewalAttempt {
         }
         self.armed = true;
         Ok(())
+    }
+
+    pub(crate) fn user_id(&self) -> Result<UserId, Error> {
+        self.snapshot().map(TokenSnapshot::user_id)
     }
 
     pub(crate) fn commit(mut self, session: InstalledSession) -> bool {

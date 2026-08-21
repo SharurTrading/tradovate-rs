@@ -20,7 +20,7 @@ the compiled dependency graph under every crate feature.
 - Lockfile path: the optional `rust_decimal` 1.42.1 `rkyv` feature records `rkyv`
   0.7.46 in `Cargo.lock` even though the feature is not enabled.
 - Runtime/build exposure: none. `rust_decimal` has default features disabled and
-  enables only `serde` and `std`. The repository defines no feature that enables
+  enables only `std`. The repository defines no feature that enables
   `rust_decimal/rkyv` or `rust_decimal/rkyv-safe`.
 - Enforced evidence: CI runs `cargo tree --locked --all-features --edges
   normal,build,dev --prefix none` and fails if any `rkyv` 0.7 package is active

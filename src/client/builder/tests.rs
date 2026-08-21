@@ -19,6 +19,17 @@ fn zero_and_excessive_response_limits_are_rejected() {
 }
 
 #[test]
+fn zero_and_excessive_request_limits_are_rejected() {
+    assert!(builder().max_request_bytes(0).build().is_err());
+    assert!(
+        builder()
+            .max_request_bytes(HARD_MAX_REQUEST_BYTES + 1)
+            .build()
+            .is_err()
+    );
+}
+
+#[test]
 fn excessive_timeouts_are_rejected() {
     assert!(
         builder()

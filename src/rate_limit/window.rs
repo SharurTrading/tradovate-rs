@@ -106,17 +106,54 @@ pub(super) fn tradovate_windows() -> Vec<Window> {
         window(Scope::Endpoint("/auth/renewaccesstoken"), 15, HOUR),
         window(Scope::Endpoint("/user/syncrequest"), 300, HOUR),
         window(Scope::Endpoint("/order/dryrun"), 500, HOUR),
+        window(
+            Scope::Endpoint("/cashBalance/changedemobalance"),
+            1_000,
+            HOUR,
+        ),
+        window(
+            Scope::Endpoint("/accountRiskStatus/switchriskcategory"),
+            5_000,
+            HOUR,
+        ),
+        // Current Partner operational rate-limit table, verified 2026-08-22.
+        // These Partner application budgets count every admitted request.
+        window(
+            Scope::Endpoint("/customerApplication/createpartnersubaccountrequest"),
+            250,
+            HOUR,
+        ),
+        window(
+            Scope::Endpoint("/customerApplication/submitcustomerapplicationdocument"),
+            30,
+            HOUR,
+        ),
+        window(
+            Scope::Endpoint("/customerApplication/submitpartnersubaccountdocument"),
+            750,
+            HOUR,
+        ),
     ]
 }
 
 pub(super) fn tradovate_failed_only() -> HashMap<&'static str, FailedOnlyWindow> {
-    HashMap::from([(
-        "/auth/accesstokenrequest",
+    HashMap::from([
+        failed_only("/auth/accesstokenrequest", 5),
+        failed_only("/auth/me", 10),
+        failed_only("/user/createevaluationusers", 100),
+        failed_only("/user/createevaluationaccounts", 100),
+        failed_only("/user/requesttradingpermission", 20),
+    ])
+}
+
+fn failed_only(endpoint: &'static str, limit: usize) -> (&'static str, FailedOnlyWindow) {
+    (
+        endpoint,
         FailedOnlyWindow {
-            limit: 5,
+            limit,
             duration: HOUR,
-            failures: VecDeque::with_capacity(5),
+            failures: VecDeque::with_capacity(limit),
             reservations: 0,
         },
-    )])
+    )
 }

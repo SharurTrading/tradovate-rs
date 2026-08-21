@@ -2,26 +2,58 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 //! Validated order commands and order queries.
+//!
+//! The handwritten contracts in this capability are derived only from the
+//! official current Partner `OpenAPI` document at
+//! <https://partner.tradovate.com/openapi.json>, pinned and reviewed on
+//! 2026-08-21. Missing current request grammar is exposed as documentation-gap
+//! metadata rather than filled from the legacy portal.
 
-#[path = "orders/models.rs"]
-mod models;
+#[path = "orders/advanced.rs"]
+mod advanced;
+#[path = "orders/annotations.rs"]
+mod annotations;
+#[path = "orders/client.rs"]
+mod client;
+#[path = "orders/documentation.rs"]
+mod documentation;
+#[path = "orders/dry_run.rs"]
+mod dry_run;
+#[path = "orders/failure.rs"]
+mod failure;
+#[path = "orders/liquidation.rs"]
+mod liquidation;
+#[path = "orders/modification.rs"]
+mod modification;
+#[path = "orders/strategy.rs"]
+mod strategy;
 #[path = "orders/wire.rs"]
 mod wire;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Deserializer, Serialize, de};
 
-use crate::{AccountId, Client, ClientOrderId, CommandId, Decimal, Error, OrderId, Symbol};
-use wire::{
-    CancelOrderWire, CommandResponse, PlaceOrderWire, PlacementResponse, WireOutcome,
-    classify_outcome, validate_prices,
+use crate::{AccountId, ClientOrderId, Decimal, Error, OrderId, Symbol};
+use wire::validate_prices;
+
+pub use crate::api::current::{
+    ids::{OcoId, OrderStrategyId, Oso1Id, Oso2Id},
+    orders::{DryRunResponse, DryRunResponseRejectReason, EstimatedFillFee, RiskEvaluationDetails},
 };
-
-pub use models::{Order, OrderStatus};
-
-const LIST_ORDERS: &str = "/order/list";
-const PLACE_ORDER: &str = "/order/placeorder";
-const CANCEL_ORDER: &str = "/order/cancelorder";
+pub use advanced::{AttachedOrder, OcoPlacement, OsoPlacement, PlaceOco, PlaceOso};
+pub use annotations::{CustomTag50, OrderText, StrategyInstanceId};
+pub use documentation::{
+    ADVANCED_ORDER_TYPES_DOCUMENTATION_GAP, ADVANCED_ORDER_TYPES_DOCUMENTATION_GAPS,
+    CurrentDocumentationGap, STANDARD_ORDER_COMBINATIONS_DOCUMENTATION_GAPS,
+};
+pub use dry_run::{DRY_RUN_EXTRA_RISK_DOCUMENTATION_GAP, DryRun, DryRunExtraRisk, DryRunOrder};
+pub use failure::OrderFailureReason;
+pub use liquidation::{LiquidatePosition, LiquidatePositions, LiquidationAuthority};
+pub use modification::ModifyOrder;
+pub use strategy::{
+    MODIFY_ORDER_STRATEGY_DOCUMENTATION_GAP, MultiBracket, MultiBracketParams,
+    OrderStrategyReceipt, OrderStrategyStatus, StartMultiBracketStrategy,
+};
 
 /// Positive integral Tradovate futures order quantity.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -139,6 +171,9 @@ pub struct PlaceOrder {
     stop_price: Option<Decimal>,
     time_in_force: TimeInForce,
     expire_time: Option<Timestamp>,
+    text: Option<OrderText>,
+    activation_time: Option<Timestamp>,
+    custom_tag50: Option<CustomTag50>,
     origin: OrderOrigin,
 }
 
@@ -162,6 +197,9 @@ impl PlaceOrder {
             stop_price: None,
             time_in_force: TimeInForce::Day,
             expire_time: None,
+            text: None,
+            activation_time: None,
+            custom_tag50: None,
             origin,
         }
     }
@@ -181,6 +219,9 @@ pub struct PlaceOrderBuilder {
     stop_price: Option<Decimal>,
     time_in_force: TimeInForce,
     expire_time: Option<Timestamp>,
+    text: Option<OrderText>,
+    activation_time: Option<Timestamp>,
+    custom_tag50: Option<CustomTag50>,
     origin: OrderOrigin,
 }
 
@@ -221,6 +262,24 @@ impl PlaceOrderBuilder {
         self
     }
 
+    /// Adds bounded provider-visible order text.
+    pub fn text(mut self, value: OrderText) -> Self {
+        self.text = Some(value);
+        self
+    }
+
+    /// Delays activation until the supplied provider timestamp.
+    pub const fn activation_time(mut self, value: Timestamp) -> Self {
+        self.activation_time = Some(value);
+        self
+    }
+
+    /// Adds a bounded provider correlation tag.
+    pub fn custom_tag50(mut self, value: CustomTag50) -> Self {
+        self.custom_tag50 = Some(value);
+        self
+    }
+
     /// Validates and constructs the placement request.
     ///
     /// # Errors
@@ -251,6 +310,9 @@ impl PlaceOrderBuilder {
             stop_price: self.stop_price,
             time_in_force: self.time_in_force,
             expire_time: self.expire_time,
+            text: self.text,
+            activation_time: self.activation_time,
+            custom_tag50: self.custom_tag50,
             origin: self.origin,
         })
     }
@@ -261,6 +323,8 @@ impl PlaceOrderBuilder {
 pub struct CancelOrder {
     order_id: OrderId,
     client_order_id: Option<ClientOrderId>,
+    activation_time: Option<Timestamp>,
+    custom_tag50: Option<CustomTag50>,
     origin: OrderOrigin,
 }
 
@@ -271,6 +335,8 @@ impl CancelOrder {
         Self {
             order_id,
             client_order_id: None,
+            activation_time: None,
+            custom_tag50: None,
             origin,
         }
     }
@@ -279,6 +345,20 @@ impl CancelOrder {
     #[must_use]
     pub fn with_client_order_id(mut self, value: ClientOrderId) -> Self {
         self.client_order_id = Some(value);
+        self
+    }
+
+    /// Delays cancellation activation until the supplied provider timestamp.
+    #[must_use]
+    pub const fn with_activation_time(mut self, value: Timestamp) -> Self {
+        self.activation_time = Some(value);
+        self
+    }
+
+    /// Adds a bounded provider correlation tag.
+    #[must_use]
+    pub fn with_custom_tag(mut self, value: CustomTag50) -> Self {
+        self.custom_tag50 = Some(value);
         self
     }
 }
@@ -297,86 +377,9 @@ impl OrderPlacement {
     }
 }
 
-impl Client {
-    /// Lists orders visible to the authenticated user.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed authentication, transport, provider, bound, or decoding
-    /// failure.
-    pub async fn list_orders(&self) -> Result<Vec<Order>, Error> {
-        self.get_without_query(LIST_ORDERS).await
-    }
-
-    /// Places one validated order without automatic retry.
-    ///
-    /// A transport loss becomes [`Error::AmbiguousMutation`]. Callers must
-    /// reconcile by `ClientOrderId`, order state, and user synchronization.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed provider rejection, transport ambiguity, penalty,
-    /// authentication, bound, encoding, or decoding failure.
-    pub async fn place_order(&self, order: &PlaceOrder) -> Result<OrderPlacement, Error> {
-        let response = self
-            .post_mutation::<PlacementResponse, _>(PLACE_ORDER, &PlaceOrderWire::from(order))
-            .await?;
-        match classify_outcome(
-            response.value().failure_reason.as_deref(),
-            response.value().order_id,
-        ) {
-            WireOutcome::Accepted(order_id) => {
-                response.resolve();
-                Ok(OrderPlacement { order_id })
-            }
-            WireOutcome::Rejected => {
-                response.resolve();
-                Err(Error::Business {
-                    endpoint: PLACE_ORDER,
-                })
-            }
-            WireOutcome::Ambiguous => Err(Error::AmbiguousMutation {
-                endpoint: PLACE_ORDER,
-            }),
-        }
-    }
-
-    /// Cancels one explicit order without automatic retry.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed provider rejection, transport ambiguity, penalty,
-    /// authentication, bound, encoding, or decoding failure.
-    pub async fn cancel_order(&self, command: &CancelOrder) -> Result<CommandId, Error> {
-        let body = CancelOrderWire {
-            order_id: command.order_id,
-            cl_ord_id: command.client_order_id.as_ref().map(ClientOrderId::as_str),
-            is_automated: command.origin.is_automated(),
-        };
-        let response = self
-            .post_mutation::<CommandResponse, _>(CANCEL_ORDER, &body)
-            .await?;
-        match classify_outcome(
-            response.value().failure_reason.as_deref(),
-            response.value().command_id,
-        ) {
-            WireOutcome::Accepted(command_id) => {
-                response.resolve();
-                Ok(command_id)
-            }
-            WireOutcome::Rejected => {
-                response.resolve();
-                Err(Error::Business {
-                    endpoint: CANCEL_ORDER,
-                })
-            }
-            WireOutcome::Ambiguous => Err(Error::AmbiguousMutation {
-                endpoint: CANCEL_ORDER,
-            }),
-        }
-    }
-}
-
+#[cfg(test)]
+#[path = "orders/endpoint_tests.rs"]
+mod endpoint_tests;
 #[cfg(test)]
 #[path = "orders/tests.rs"]
 mod tests;

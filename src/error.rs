@@ -226,6 +226,14 @@ pub enum Error {
         #[source]
         source: serde_json::Error,
     },
+    /// A serialized request exceeded the configured byte ceiling.
+    #[error("{endpoint} request exceeded {limit} bytes")]
+    RequestTooLarge {
+        /// Provider endpoint.
+        endpoint: &'static str,
+        /// Configured byte ceiling.
+        limit: usize,
+    },
     /// The provider returned a non-success HTTP status.
     #[error("{endpoint} returned HTTP {status}")]
     HttpStatus {
@@ -239,6 +247,14 @@ pub enum Error {
     Business {
         /// Provider endpoint.
         endpoint: &'static str,
+    },
+    /// The provider rejected an order command with a documented reason.
+    #[error("{endpoint} rejected the order command")]
+    OrderRejected {
+        /// Provider endpoint.
+        endpoint: &'static str,
+        /// Current Partner rejection category; free-form failure text is not retained.
+        reason: crate::api::OrderFailureReason,
     },
     /// A reserved provider control field had an invalid or contradictory shape.
     #[error("{endpoint} returned a malformed provider control envelope")]
@@ -312,71 +328,17 @@ pub enum Error {
         /// Mutation endpoint refused before transmission.
         endpoint: &'static str,
     },
+    /// Another mutation already owns this client's single in-flight slot.
+    #[error("{endpoint} is blocked while another mutation is in flight")]
+    MutationInProgress {
+        /// Mutation endpoint refused before transmission.
+        endpoint: &'static str,
+    },
     /// An older authentication result lost a revision race.
     #[error("authentication result was superseded by a newer session attempt")]
     SupersededAuthentication,
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn penalty_retry_is_bound_and_single_use() {
-        let mut ticket = PenaltyTicket::new(
-            "synthetic-ticket".to_owned(),
-            Duration::ZERO,
-            false,
-            7,
-            "/auth/accesstokenrequest",
-            Some(Instant::now()),
-        );
-        ticket.bind_request(b"exact-request".to_vec());
-        assert!(
-            ticket
-                .begin_claim_for_request(7, "/auth/accesstokenrequest", b"different-request")
-                .is_none()
-        );
-        assert!(
-            ticket
-                .begin_claim_for_request(8, "/auth/accesstokenrequest", b"exact-request")
-                .is_none()
-        );
-        assert!(
-            ticket
-                .begin_claim_for_request(7, "/different", b"exact-request")
-                .is_none()
-        );
-        let claim = ticket.begin_claim_for_request(7, "/auth/accesstokenrequest", b"exact-request");
-        assert!(claim.is_some());
-        drop(claim);
-        let mut claim = ticket
-            .begin_claim_for_request(7, "/auth/accesstokenrequest", b"exact-request")
-            .unwrap_or_else(|| panic!("cancelled pre-send claim must roll back"));
-        claim.arm();
-        drop(claim);
-        assert!(
-            ticket
-                .begin_claim_for_request(7, "/auth/accesstokenrequest", b"exact-request")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn penalty_retry_cannot_be_claimed_before_its_monotonic_deadline() {
-        let mut ticket = PenaltyTicket::new(
-            "synthetic-ticket".to_owned(),
-            Duration::from_mins(1),
-            false,
-            7,
-            "/auth/accesstokenrequest",
-            Instant::now().checked_add(Duration::from_mins(1)),
-        );
-        ticket.bind_request(b"exact-request".to_vec());
-        assert!(
-            ticket
-                .begin_claim_for_request(7, "/auth/accesstokenrequest", b"exact-request")
-                .is_none()
-        );
-    }
-}
+#[path = "error/tests.rs"]
+mod tests;

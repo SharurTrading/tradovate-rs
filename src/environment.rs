@@ -107,6 +107,16 @@ impl EndpointSet {
     pub const fn replay_websocket(&self) -> &Url {
         &self.replay_websocket
     }
+
+    /// Reports whether demo-only REST operations may use this endpoint set.
+    pub(crate) fn permits_demo_only_rest(&self) -> bool {
+        self.rest.as_str().trim_end_matches('/') == DEMO_REST || is_loopback(&self.rest)
+    }
+
+    /// Reports whether live-only Partner operations may use this endpoint set.
+    pub(crate) fn permits_live_only_rest(&self) -> bool {
+        self.rest.as_str().trim_end_matches('/') == LIVE_REST || is_loopback(&self.rest)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -131,16 +141,20 @@ fn validate_url(label: &'static str, raw: &str, kind: UrlKind) -> Result<Url, Co
         UrlKind::Rest => "http",
         UrlKind::WebSocket => "ws",
     };
-    let is_loopback = match url.host() {
+    let loopback = is_loopback(&url);
+    if url.scheme() != secure_scheme && !(loopback && url.scheme() == fixture_scheme) {
+        return Err(ConfigError::InsecureUrl { label });
+    }
+    Ok(url)
+}
+
+fn is_loopback(url: &Url) -> bool {
+    match url.host() {
         Some(Host::Domain("localhost")) => true,
         Some(Host::Ipv4(address)) => address == Ipv4Addr::LOCALHOST,
         Some(Host::Ipv6(address)) => address == Ipv6Addr::LOCALHOST,
         _ => false,
-    };
-    if url.scheme() != secure_scheme && !(is_loopback && url.scheme() == fixture_scheme) {
-        return Err(ConfigError::InsecureUrl { label });
     }
-    Ok(url)
 }
 
 fn parse_builtin(raw: &str) -> Url {
@@ -174,5 +188,17 @@ mod tests {
             REPLAY_WS,
         );
         assert!(matches!(result, Err(ConfigError::InsecureUrl { .. })));
+    }
+
+    #[test]
+    fn demo_only_operations_reject_the_builtin_live_rest_endpoint() {
+        assert!(Environment::Demo.endpoints().permits_demo_only_rest());
+        assert!(!Environment::Live.endpoints().permits_demo_only_rest());
+    }
+
+    #[test]
+    fn live_only_operations_reject_the_builtin_demo_rest_endpoint() {
+        assert!(Environment::Live.endpoints().permits_live_only_rest());
+        assert!(!Environment::Demo.endpoints().permits_live_only_rest());
     }
 }

@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Kevin Monaghan
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-//! Fixed initial user-synchronization profile and bootstrap validation.
+//! Validated initial user-synchronization request and bootstrap readiness.
 //!
-//! Contract reviewed 2026-08-21 against Tradovate's official User/Syncrequest
+//! Contract reviewed 2026-08-22 against Tradovate's official User/Syncrequest
 //! documentation: <https://partner.tradovate.com/overview/core-concepts/web-sockets/user-syncrequest>.
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Deserializer, Serialize, de::IgnoredAny};
+use serde::{Deserialize, Deserializer, de::IgnoredAny};
 use serde_json::value::RawValue;
 use tokio::time;
 use tokio_tungstenite::tungstenite::Message;
@@ -17,63 +17,21 @@ use super::{ResponseWait, Socket, send_heartbeat_aware, wait_for_response};
 use crate::{
     provider_control::{self, PenaltyControl, ResponseControl},
     rate_limit::RateGovernor,
-    realtime::{RealtimeError, Response, ServerMessage},
+    realtime::{RealtimeError, Response, ServerMessage, UserSyncConfig, user_stream::decode},
 };
 
 const RATE_ENDPOINT: &str = "/user/syncrequest";
-
-const SNAPSHOT_FIELDS: &[&str] = &[
-    "accounts",
-    "accountRiskStatuses",
-    "cashBalances",
-    "commands",
-    "commandReports",
-    "executionReports",
-    "fills",
-    "fillPairs",
-    "orders",
-    "orderStrategies",
-    "positions",
-    "products",
-    "users",
-];
-
-const ENTITY_TYPES: &[&str] = &[
-    "account",
-    "accountRiskStatus",
-    "cashBalance",
-    "command",
-    "commandReport",
-    "executionReport",
-    "fill",
-    "fillPair",
-    "order",
-    "orderStrategy",
-    "position",
-    "product",
-    "user",
-];
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct UserSyncBody {
-    split_responses: bool,
-    entity_types: &'static [&'static str],
-}
 
 pub(super) async fn perform(
     socket: &mut Socket,
     heartbeat: &mut time::Interval,
     heartbeat_deadline: &mut time::Instant,
     rate_limits: &RateGovernor,
+    sync_config: &UserSyncConfig,
     staged: &mut Vec<ServerMessage>,
     wait: ResponseWait<'_>,
 ) -> Result<(Response, u64), RealtimeError> {
-    let body = serde_json::to_string(&UserSyncBody {
-        split_responses: false,
-        entity_types: ENTITY_TYPES,
-    })
-    .map_err(|_| RealtimeError::Protocol)?;
+    let body = sync_config.encode()?;
     let frame = wait
         .codec
         .encode_request("user/syncrequest", wait.request_id, "", &body)?;
@@ -142,10 +100,10 @@ fn validate(response: Response, rate_limits: &RateGovernor) -> Result<SyncRespon
     let data = response
         .data()
         .ok_or(RealtimeError::UserSyncInvalidBootstrap)?;
-    let snapshot_present = inspect_snapshot(data)?;
+    let snapshot = inspect_snapshot(data)?;
     match provider_control::inspect(response.data()) {
-        Ok(ResponseControl::Payload) if snapshot_present => {}
-        Ok(ResponseControl::Penalty(penalty)) if !snapshot_present => {
+        Ok(ResponseControl::Payload) if snapshot.complete => {}
+        Ok(ResponseControl::Penalty(penalty)) if !snapshot.evidence => {
             return Ok(SyncResponse::Penalty(penalty));
         }
         Ok(
@@ -158,19 +116,28 @@ fn validate(response: Response, rate_limits: &RateGovernor) -> Result<SyncRespon
     Ok(SyncResponse::Bootstrap(response))
 }
 
-fn inspect_snapshot(data: &RawValue) -> Result<bool, RealtimeError> {
+fn inspect_snapshot(data: &RawValue) -> Result<SnapshotInspection, RealtimeError> {
     let fields = serde_json::from_str::<BTreeMap<String, Box<RawValue>>>(data.get())
         .map_err(|_| RealtimeError::UserSyncInvalidBootstrap)?;
-    let mut snapshot_field_seen = false;
-    for field in SNAPSHOT_FIELDS {
+    let mut evidence = false;
+    for field in decode::BOOTSTRAP_COLLECTIONS {
         if let Some(value) = fields.get(*field) {
             if serde_json::from_str::<Vec<EntityObject>>(value.get()).is_err() {
                 return Err(RealtimeError::UserSyncInvalidBootstrap);
             }
-            snapshot_field_seen = true;
+            evidence = true;
         }
     }
-    Ok(snapshot_field_seen)
+    Ok(SnapshotInspection {
+        evidence,
+        complete: fields.contains_key("users") && fields.contains_key("contractGroups"),
+    })
+}
+
+#[derive(Clone, Copy)]
+struct SnapshotInspection {
+    evidence: bool,
+    complete: bool,
 }
 
 struct EntityObject;

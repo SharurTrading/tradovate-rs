@@ -3,6 +3,9 @@
 
 //! Bounded REST execution and provider-envelope classification.
 
+mod documented;
+mod mutation;
+
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -10,13 +13,14 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::value::RawValue;
 
 use super::{
-    Client,
-    mutation::{MutationResponse, MutationWireResponse},
+    Client, encode_bounded_json,
+    mutation::{DocumentedMutationResponse, MutationResponse},
 };
 use crate::{
     Error, PenaltyTicket,
     auth::TokenSnapshot,
     provider_control::{self, ResponseControl},
+    rate_limit::RateAdmission,
 };
 
 /// A response type can identify wire evidence that contradicts a provider
@@ -31,15 +35,23 @@ impl Client {
         T: DeserializeOwned,
         Q: Serialize + ?Sized,
     {
-        self.admit_query(endpoint).await?;
-        let token = self.tokens.snapshot(crate::auth::TokenKind::Access)?;
+        let admission = self.admit_query(endpoint).await;
+        let token = match self.tokens.snapshot(crate::auth::TokenKind::Access) {
+            Ok(token) => token,
+            Err(error) => {
+                admission.release_unsent();
+                return Err(error);
+            }
+        };
         let request = self
             .http
             .get(self.endpoint_url(endpoint))
             .bearer_auth(token.expose())
             .query(query);
-        self.execute_query(request, endpoint, Some(&token), false, no_success_evidence)
-            .await
+        let result = self
+            .execute_query(request, endpoint, Some(&token), false, no_success_evidence)
+            .await;
+        finish_rate_admission(admission, result)
     }
 
     pub(crate) async fn get_without_query<T>(&self, endpoint: &'static str) -> Result<T, Error>
@@ -55,14 +67,12 @@ impl Client {
         body: &B,
     ) -> Result<MutationResponse<T>, Error>
     where
-        T: DeserializeOwned + MutationWireResponse,
+        T: DeserializeOwned + DocumentedMutationResponse,
         B: Serialize + ?Sized,
     {
         self.mutation_gate.ensure_available(endpoint)?;
+        let encoded = encode_bounded_json(body, endpoint, self.max_request_bytes)?;
         let token = self.tokens.snapshot(crate::auth::TokenKind::Access)?;
-        self.admit_mutation(endpoint)?;
-        let encoded =
-            serde_json::to_vec(body).map_err(|source| Error::Encode { endpoint, source })?;
         let request = self
             .http
             .post(self.endpoint_url(endpoint))
@@ -81,6 +91,19 @@ impl Client {
         T: DeserializeOwned + ControlWireResponse,
     {
         self.execute_query(request, endpoint, None, true, T::has_success_evidence)
+            .await
+    }
+
+    /// Executes a public query whose penalty ticket cannot be safely retried.
+    pub(crate) async fn execute_public_without_penalty_retry<T>(
+        &self,
+        request: reqwest::RequestBuilder,
+        endpoint: &'static str,
+    ) -> Result<T, Error>
+    where
+        T: DeserializeOwned + ControlWireResponse,
+    {
+        self.execute_query(request, endpoint, None, false, T::has_success_evidence)
             .await
     }
 
@@ -129,8 +152,7 @@ impl Client {
             .and_then(|value| value.parse::<u64>().ok())
             .map(Duration::from_secs);
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            let retry_after = official_429_cooldown(retry_after);
-            self.rate_limits.apply_global_cooldown(retry_after);
+            let retry_after = apply_429_cooldown(&self.rate_limits, retry_after);
             return Err(Error::ProviderRateLimit {
                 endpoint,
                 retry_after,
@@ -167,89 +189,6 @@ impl Client {
         serde_json::from_slice(&bytes).map_err(|source| Error::Decode { endpoint, source })
     }
 
-    async fn execute_mutation<T>(
-        &self,
-        request: reqwest::RequestBuilder,
-        endpoint: &'static str,
-        token: &TokenSnapshot,
-    ) -> Result<MutationResponse<T>, Error>
-    where
-        T: DeserializeOwned + MutationWireResponse,
-    {
-        if !self.tokens.is_current(token) {
-            return Err(Error::Unauthenticated);
-        }
-        let mut attempt = self.mutation_gate.attempt(endpoint)?;
-        attempt.arm()?;
-        let response = match request.send().await {
-            Ok(response) => response,
-            Err(source) if source.is_connect() => {
-                attempt.resolve();
-                return Err(Error::Transport { source });
-            }
-            Err(_) => return Err(Error::AmbiguousMutation { endpoint }),
-        };
-        let status = response.status();
-        let retry_after = response
-            .headers()
-            .get(reqwest::header::RETRY_AFTER)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<u64>().ok())
-            .map(Duration::from_secs);
-
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            let retry_after = official_429_cooldown(retry_after);
-            self.rate_limits.apply_global_cooldown(retry_after);
-            attempt.resolve();
-            return Err(Error::ProviderRateLimit {
-                endpoint,
-                retry_after,
-            });
-        }
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            self.tokens.invalidate_if_current(token);
-            attempt.resolve();
-            return Err(Error::HttpStatus {
-                endpoint,
-                status: status.as_u16(),
-            });
-        }
-        if !status.is_success() {
-            if definitive_rejection(status) {
-                attempt.resolve();
-                return Err(Error::HttpStatus {
-                    endpoint,
-                    status: status.as_u16(),
-                });
-            }
-            return Err(Error::AmbiguousMutation { endpoint });
-        }
-
-        let Ok(bytes) = read_bounded(response, endpoint, self.max_response_bytes).await else {
-            return Err(Error::AmbiguousMutation { endpoint });
-        };
-        let Ok(value) = serde_json::from_slice::<T>(&bytes) else {
-            return Err(Error::AmbiguousMutation { endpoint });
-        };
-        if let Err(error) =
-            inspect_provider_control(&bytes, self.instance_id, endpoint, &self.rate_limits, false)
-        {
-            if matches!(
-                error,
-                Error::Business { .. }
-                    | Error::Violations { .. }
-                    | Error::Penalty(_)
-                    | Error::ProviderPenalty { .. }
-            ) && !value.has_success_evidence()
-            {
-                attempt.resolve();
-                return Err(error);
-            }
-            return Err(Error::AmbiguousMutation { endpoint });
-        }
-        Ok(MutationResponse::new(value, attempt))
-    }
-
     pub(crate) fn endpoint_url(&self, endpoint: &'static str) -> String {
         format!(
             "{}{}",
@@ -258,13 +197,29 @@ impl Client {
         )
     }
 
-    pub(crate) async fn admit_query(&self, endpoint: &'static str) -> Result<(), Error> {
-        self.rate_limits.wait(endpoint).await;
-        Ok(())
+    pub(crate) async fn admit_query(&self, endpoint: &'static str) -> RateAdmission<'_> {
+        self.rate_limits.begin_authenticated(endpoint).await
     }
+}
 
-    fn admit_mutation(&self, endpoint: &'static str) -> Result<(), Error> {
-        self.rate_limits.admit_immediate(endpoint)
+pub(super) fn finish_rate_admission<T>(
+    admission: RateAdmission<'_>,
+    result: Result<T, Error>,
+) -> Result<T, Error> {
+    match result {
+        Ok(value) => {
+            admission.succeed();
+            Ok(value)
+        }
+        Err(Error::Unauthenticated) => {
+            admission.release_unsent();
+            Err(Error::Unauthenticated)
+        }
+        Err(Error::Transport { source }) if source.is_connect() || source.is_builder() => {
+            admission.release_unsent();
+            Err(Error::Transport { source })
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -272,8 +227,13 @@ fn no_success_evidence(_body: &[u8]) -> bool {
     false
 }
 
-fn official_429_cooldown(retry_after: Option<Duration>) -> Duration {
-    retry_after.unwrap_or_default().max(Duration::from_hours(1))
+fn apply_429_cooldown(
+    rate_limits: &crate::rate_limit::RateGovernor,
+    retry_after: Option<Duration>,
+) -> Duration {
+    let retry_after = retry_after.unwrap_or_default().max(Duration::from_hours(1));
+    rate_limits.apply_global_cooldown(retry_after);
+    retry_after
 }
 
 fn definitive_rejection(status: reqwest::StatusCode) -> bool {

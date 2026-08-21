@@ -81,7 +81,7 @@ jobs:
               echo "::error file=${file}::missing the full proprietary notice or LicenseRef-Proprietary SPDX header"
               status=1
             fi
-          done < <(git ls-files -z -- '*.rs' '*.sh' '*.toml' '*.md' '*.yml' '*.yaml')
+          done < <(git ls-files -z -- '*.rs' '*.py' '*.sh' '*.toml' '*.md' '*.yml' '*.yaml')
           exit "$status"
 
       - name: Enforce file-size policy
@@ -94,6 +94,9 @@ jobs:
             echo "::error::the shared reqwest client must explicitly disable dependency-owned retries"
             exit 1
           fi
+
+      - name: Verify generated current API
+        run: python3 tools/generate_openapi.py --check
 
       - name: cargo fmt
         run: cargo fmt --all -- --check

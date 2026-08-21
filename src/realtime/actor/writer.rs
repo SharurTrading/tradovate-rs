@@ -15,6 +15,15 @@ use crate::realtime::{ConnectionId, DisconnectReason, RealtimeError, ResyncReaso
 
 pub(super) const HEARTBEAT_PERIOD: Duration = Duration::from_millis(2_500);
 
+pub(super) fn advance_heartbeat_deadline(deadline: Instant) -> Result<Instant, RealtimeError> {
+    deadline
+        .checked_add(HEARTBEAT_PERIOD)
+        .ok_or(RealtimeError::InvalidConfiguration {
+            field: "heartbeat_period",
+            reason: "is too large for a monotonic deadline",
+        })
+}
+
 pub(super) struct SendControl<'a> {
     connection_id: ConnectionId,
     cancellation: &'a CancellationToken,

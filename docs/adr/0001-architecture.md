@@ -71,12 +71,60 @@ src/
   client/{mod,builder,execute}.rs
   rate_limit/{mod,tests}.rs
   api/{mod,accounts,contracts,orders,positions}.rs
-  realtime/{mod,actor,codec,config,connection,error,market_data,types}.rs
+  api/current/{mod,support}.rs
+  api/current/mutations/{customer,entity_write,risk_control,...}.rs
+  api/current/generated/{accounting,alerts,authentication,configuration,
+    contracts,fees,funds,ids,manifest,orders,positions,risks,users}.rs
+  realtime/{mod,actor,codec,config,connection,error,event,types}.rs
+  realtime/{user_stream,market_data,chart}.rs
 ```
 
 The exact filenames may evolve, but ownership may not collapse into catch-all
 `models`, `helpers`, `utils`, or `manager` modules. `lib.rs` remains documentation,
 module declarations, selective re-exports, and narrow wiring.
+
+### Current REST contract generation
+
+The sole REST generation input is
+`spec/official/openapi-2026-08-21.json`, retrieved from the current Partner OpenAPI
+on 2026-08-21. Its reviewed SHA-256 is
+`37caeccf4b0913460a788fcaf4c902497059b8ffe6f6355512e6c08eaacde769`.
+
+`tools/generate_openapi.py` validates that digest and deterministically emits the
+checked-in `api/current/generated` boundary. The generated boundary owns:
+
+- all 278 current component schemas, including exact-decimal field adapters,
+  validated identity newtypes, private fields, builders, and accessors;
+- generated query methods grouped by the eleven current capability tags, while
+  lifecycle-sensitive and state-changing methods require a separately reviewed
+  handwritten implementation;
+- an exhaustive manifest of 350 unique method/path pairs, classified as 271 queries,
+  73 mutations, and 6 lifecycle operations;
+- surface status for every row: 263 generated, 71 specialized, 0 modeled-only, and
+  16 documentation blocked;
+- response status for every row: 338 typed, 11 unspecified by the pin, and 1
+  incomplete in the pin; and
+- forward-compatible response enums whose unknown values remain observable but
+  cannot be serialized into requests.
+
+Generated query methods may call only handwritten query execution hooks. They do not
+construct a second HTTP client, acquire tokens directly, retry requests, or decode
+unbounded bodies. A mutation schema produces models and a manifest entry, not
+transmission authority: every callable mutation requires reviewed validation and
+endpoint-specific completion evidence on the single-attempt mutation path.
+Authentication and per-connection user synchronization similarly stay in their
+handwritten session or realtime lifecycle owner.
+
+The resulting public surface has 334 callable typed operations: 333 direct REST
+methods plus `/user/syncrequest`, which is owned by the realtime lifecycle. The remaining
+16 rows are not left as implicit TODOs: each is classified
+`DocumentationBlocked` with the exact missing request, response, or completion
+evidence. No blocked row gains invented fields, invented success semantics, or a raw
+response escape hatch.
+
+Generated Rust is never hand-edited. `tools/generate_openapi.py --check` is a CI
+contract, and changing the pinned input or digest requires a semantic, safety,
+query/mutation/lifecycle classification, and schema-gap review.
 
 ### Public API
 
@@ -124,6 +172,16 @@ are disabled so no request can bypass this policy. Response bodies are streamed 
 a configurable hard byte limit. HTTP-200 business failures and penalty-ticket bodies
 are decoded before success; captcha penalties require operator action.
 
+The pinned OpenAPI is the operation inventory, while the current Partner rate-limit
+table is the operational quota authority. All-request and failed-response-only
+endpoint windows are reserved atomically with the user window. Proven pre-send
+failures release every reservation; cancellation after the send boundary retains
+all-request capacity and counts conservatively as failure. Demo balance admission
+combines the 1,000/hour endpoint window with the one-change-per-account-per-hour
+guard because caller administrator status is not trustworthy local state. A 429 is
+always a global one-hour minimum stop; only a validated penalty ticket uses the
+endpoint-specific `p-time`.
+
 ### Realtime lifecycle
 
 Each connection attempt receives a monotonically increasing generation.
@@ -144,8 +202,8 @@ ordinary `Closed` state.
 
 The transport never owns canonical subscriptions or account/order/position truth.
 The caller creates a new connection after failure, replays its idempotent set, and
-performs snapshot-before-delta recovery. Replay signals and recovery acknowledgement
-are deferred; documentation must not imply that they already exist.
+performs snapshot-before-delta recovery. Recovery acknowledgement remains
+caller-owned.
 
 Tradovate's SockJS-derived connection uses one exact four-field request per WebSocket
 frame, bounded request correlation, and the required `[]` client heartbeat on an
@@ -157,10 +215,23 @@ contract. A validated penalty installs its full monotonic cooldown and ends setu
 without an automatic retry.
 Authorization-era messages and messages co-batched with the sync response are staged
 under the event budget, then published strictly after bootstrap and before readiness.
-The first slice keeps its fixed, unsplit entity bootstrap and realtime state machine
-as a crate-unit-test architecture harness. It is excluded from production builds;
-connection, subscription, and raw event surfaces remain unavailable until bounded
-typed event models provide the public alternative required by the API standard.
+The realtime module is production compiled and selectively public. Its validated,
+single-response user bootstrap requests all 31 current `SyncMessage` entity families
+by default and requires the schema-mandatory `users` and `contractGroups` collections
+before readiness. `UserSyncConfig` models current filters, cutoff, entity selection,
+the closed socket-sharding grammar, and `fullOrgSnapshot`, and rejects forbidden
+filter/sharding combinations before spawning the actor. Typed bootstrap and `props`
+deltas, including `OtherEnvAdminAlertSignal`, reuse current REST entity models.
+Quote, depth, histogram, regular-bar, and compact-tick events use exact
+`Decimal` values; chart requests validate their cross-field invariants and retain
+distinct historical and realtime IDs. Raw JSON exists only inside bounded private
+decoders and never crosses the public event boundary.
+
+The current Partner documentation does not define a completion marker for B2B
+`splitResponses: true`, nor the replay `clock` payload or replay control protocol.
+Those contracts are represented by explicit `DocumentationBlockedCapability` values
+and remain unavailable until a current provider contract or synthetic staging fixture
+supplies the missing evidence.
 
 ### Validation and maintainability
 
@@ -184,6 +255,9 @@ Positive consequences:
 - token and connection races have explicit commit fences;
 - bounded transport makes overload and data loss observable;
 - capability modules and file limits keep code reviewable as coverage grows.
+- the operation manifest makes current REST coverage auditable without exposing a
+  raw endpoint API;
+- hash-fenced deterministic generation makes provider drift explicit in review.
 
 Costs and tradeoffs:
 
@@ -191,8 +265,12 @@ Costs and tradeoffs:
 - callers must own subscription replay and reconciliation;
 - adding an endpoint requires request validation, error classification, tests, and
   documentation rather than only a convenience method;
-- provider schema generation, if introduced, needs a documented generated boundary
-  and a stable translation layer before types become public.
+- generated code is large even though it is capability-split and mechanically
+  reproducible;
+- 16 REST operations remain intentionally documentation blocked until Tradovate
+  publishes the request, response, or completion evidence identified in the manifest;
+- B2B multipart user synchronization and replay clock/control remain intentionally
+  unavailable until their current wire contracts are published or confirmed.
 
 ## Rejected alternatives
 
@@ -231,5 +309,5 @@ or future provider behavior difficult to classify safely.
 
 Later ADRs must record material choices such as the exact authentication refresh
 state machine, official provider rate-budget mapping, realtime wire protocol and
-limits, and any schema-generation process. Those decisions must preserve this
-boundary and the stable rules in `AGENTS.md`.
+limits, and any change to the schema-generation process. Those decisions must
+preserve this boundary and the stable rules in `AGENTS.md`.

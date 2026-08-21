@@ -66,6 +66,7 @@ Review severities:
 | **TV-PRIVATE-01** | All original repository content is proprietary, carries the repository header where appropriate, remains in approved private systems, and is not published to crates.io or another public registry. |
 | **TV-SIZE-01** | Handwritten `src` files target 400 physical lines and may not exceed 600; `lib.rs` and every `mod.rs` may not exceed 200; test files may not exceed 800. Only documented generated files under a `generated/` boundary are exempt. |
 | **TV-SUPPLY-01** | Never suppress an active dependency advisory. A lockfile-only false positive may be ignored only with a checked-in evidence record, a CI feature-graph guard proving the package is inactive under all crate features, and an explicit removal condition. |
+| **TV-CURRENT-01** | The REST surface is generated only from the reviewed, hash-pinned current Partner OpenAPI snapshot. The older API explorer and guide-only fragments are evidence of drift, not implementation inputs. Generated files are checked in, never hand-edited, and must reproduce byte-for-byte under `tools/generate_openapi.py --check`; changing the snapshot or hash requires a semantic, safety, and legacy-divergence review. |
 
 ## Locked architecture
 
@@ -223,6 +224,8 @@ live account data, WebSocket captures, HAR files, or credentials into the reposi
 - Update rustdoc, README, changelog, and ADRs in the same slice as behavior.
 - Cite official Tradovate documentation for wire-contract decisions in code comments
   or ADRs; record the access/version date when the provider document is mutable.
+- Run `python3 tools/generate_openapi.py --check` whenever the current REST contract,
+  generator, or generated output is touched. Never patch generated Rust directly.
 - Commit `Cargo.lock` and use locked dependency commands in CI.
 - Keep third-party dependencies minimal, audited, license-approved, and free of
   default features that widen the network or TLS stack unintentionally.

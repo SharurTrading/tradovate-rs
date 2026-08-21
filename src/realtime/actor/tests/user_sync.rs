@@ -2,6 +2,48 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 use super::*;
+use crate::realtime::{UserSyncConfig, UserSyncEntityType, UserSyncShardBy, UserSyncSharding};
+
+#[tokio::test]
+async fn custom_user_sync_profile_reaches_the_single_owner_handshake() {
+    let (listener, url) = bind().await;
+    let server = tokio::spawn(async move {
+        let mut socket = accept(listener).await;
+        send_text(&mut socket, "o").await;
+        let _authorization = next_text(&mut socket).await;
+        send_text(&mut socket, r#"a[{"i":1,"s":200}]"#).await;
+        let sync = next_text(&mut socket).await;
+        assert!(sync.starts_with("user/syncrequest\n2\n\n"));
+        assert!(sync.contains(r#""splitResponses":false"#));
+        assert!(sync.contains(r#""entityTypes":["order","fill"]"#));
+        assert!(sync.contains(r#""expressionType":"modAccountId""#));
+        assert!(sync.contains(r#""divisor":3,"remainder":1"#));
+        assert!(sync.contains(r#""fullOrgSnapshot":true"#));
+        send_text(
+            &mut socket,
+            r#"a[{"i":2,"s":200,"d":{"users":[],"contractGroups":[]}}]"#,
+        )
+        .await;
+        expect_close(&mut socket).await;
+    });
+    let client = authenticated_client(&url, "access", None);
+    let shard = UserSyncSharding::new(UserSyncShardBy::AccountId, 3, 1)
+        .unwrap_or_else(|error| panic!("fixture shard: {error}"));
+    let sync = UserSyncConfig::new(vec![UserSyncEntityType::Order, UserSyncEntityType::Fill])
+        .and_then(|config| config.sharding(shard))
+        .map(|config| config.full_org_snapshot(true));
+    let Ok(sync) = sync else {
+        panic!("fixture sync profile must validate");
+    };
+    let connection = client
+        .connect_user_realtime(RealtimeConfig::default(), sync)
+        .await;
+    let Ok(connection) = connection else {
+        panic!("custom user socket must become ready");
+    };
+    assert!(connection.shutdown().await.is_ok());
+    join(server).await;
+}
 
 #[tokio::test]
 async fn status_only_user_sync_never_publishes_ready() {
@@ -43,6 +85,35 @@ async fn arbitrary_object_user_sync_never_publishes_ready() {
             .connect_realtime(SocketKind::User, RealtimeConfig::default())
             .await,
         Err(RealtimeError::UserSyncInvalidBootstrap)
+    ));
+    join(server).await;
+}
+
+#[tokio::test]
+async fn unknown_collection_alongside_snapshot_invalidates_before_ready() {
+    let (listener, url) = bind().await;
+    let server = tokio::spawn(async move {
+        let mut socket = accept(listener).await;
+        send_text(&mut socket, "o").await;
+        let _authorization = next_text(&mut socket).await;
+        send_text(&mut socket, r#"a[{"i":1,"s":200}]"#).await;
+        let _sync = next_text(&mut socket).await;
+        send_text(
+            &mut socket,
+            r#"a[{"i":2,"s":200,"d":{"users":[],"contractGroups":[],"futureEntities":[]}}]"#,
+        )
+        .await;
+    });
+    let client = authenticated_client(&url, "access", None);
+
+    assert!(matches!(
+        client
+            .connect_realtime(SocketKind::User, RealtimeConfig::default())
+            .await,
+        Err(RealtimeError::ResyncRequired {
+            reason: ResyncReason::UnsupportedEvent,
+            ..
+        })
     ));
     join(server).await;
 }
@@ -250,13 +321,13 @@ async fn co_batched_user_sync_delta_is_published_after_bootstrap() {
         let _authorization = next_text(&mut socket).await;
         send_text(
             &mut socket,
-            r#"a[{"i":1,"s":200},{"e":"props","d":{"phase":"authorization"}}]"#,
+            r#"a[{"i":1,"s":200},{"e":"props","d":{"entityType":"order","eventType":"Updated","entity":{"id":10,"accountId":20,"contractId":30,"timestamp":"2026-08-21T00:00:00Z","action":"Buy","ordStatus":"Working","admin":false}}}]"#,
         )
         .await;
         let _sync = next_text(&mut socket).await;
         send_text(
             &mut socket,
-            r#"a[{"i":2,"s":200,"d":{"users":[]}},{"e":"props","d":{"entityType":"order","eventType":"Updated"}}]"#,
+            r#"a[{"i":2,"s":200,"d":{"users":[],"contractGroups":[]}},{"e":"props","d":{"entityType":"order","eventType":"Updated","entity":{"id":11,"accountId":20,"contractId":30,"timestamp":"2026-08-21T00:00:01Z","action":"Buy","ordStatus":"Working","admin":false}}}]"#,
         )
         .await;
         expect_close(&mut socket).await;
@@ -269,21 +340,21 @@ async fn co_batched_user_sync_delta_is_published_after_bootstrap() {
             .recv_event()
             .await
             .map(RealtimeEvent::into_payload),
-        Some(RealtimeEventPayload::Bootstrap(_))
+        Some(RealtimeEventPayload::User(UserStreamEvent::Bootstrap(_)))
     ));
     assert!(matches!(
         connection
             .recv_event()
             .await
             .map(RealtimeEvent::into_payload),
-        Some(RealtimeEventPayload::Event(Event::Properties(Some(_))))
+        Some(RealtimeEventPayload::User(UserStreamEvent::Properties(_)))
     ));
     assert!(matches!(
         connection
             .recv_event()
             .await
             .map(RealtimeEvent::into_payload),
-        Some(RealtimeEventPayload::Event(Event::Properties(Some(_))))
+        Some(RealtimeEventPayload::User(UserStreamEvent::Properties(_)))
     ));
     assert!(connection.shutdown().await.is_ok());
     join(server).await;
@@ -300,7 +371,7 @@ async fn user_sync_staging_reserves_capacity_for_bootstrap() {
         let _sync = next_text(&mut socket).await;
         send_text(
             &mut socket,
-            r#"a[{"i":2,"s":200,"d":{"users":[]}},{"e":"props","d":{}}]"#,
+            r#"a[{"i":2,"s":200,"d":{"users":[],"contractGroups":[]}},{"e":"props","d":{"entityType":"order","eventType":"Updated","entity":{"id":11,"accountId":20,"contractId":30,"timestamp":"2026-08-21T00:00:01Z","action":"Buy","ordStatus":"Working","admin":false}}}]"#,
         )
         .await;
     });

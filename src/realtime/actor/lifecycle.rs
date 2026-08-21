@@ -3,9 +3,33 @@
 
 //! Terminal lifecycle-state publication for setup and active generations.
 
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
-use crate::realtime::{ConnectionId, DisconnectReason, RealtimeError, RealtimeState, ResyncReason};
+use crate::realtime::{
+    ConnectionId, DisconnectReason, RealtimeError, RealtimeEvent, RealtimeEventPayload,
+    RealtimeState, ResyncReason,
+};
+
+pub(super) fn publish_event(
+    events: &mpsc::Sender<RealtimeEvent>,
+    connection_id: ConnectionId,
+    payload: RealtimeEventPayload,
+) -> Result<(), RealtimeError> {
+    let requires_resync = payload.requires_resync();
+    let event = RealtimeEvent::new(connection_id, payload);
+    match events.try_send(event) {
+        Ok(()) if requires_resync => Err(RealtimeError::ResyncRequired {
+            connection_id,
+            reason: ResyncReason::UnsupportedEvent,
+        }),
+        Ok(()) => Ok(()),
+        Err(mpsc::error::TrySendError::Full(_)) => Err(RealtimeError::ResyncRequired {
+            connection_id,
+            reason: ResyncReason::EventBufferOverflow,
+        }),
+        Err(mpsc::error::TrySendError::Closed(_)) => Err(RealtimeError::ActorStopped),
+    }
+}
 
 pub(super) fn publish_setup_failure(
     state: &watch::Sender<RealtimeState>,

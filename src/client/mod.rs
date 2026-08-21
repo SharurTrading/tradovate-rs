@@ -6,6 +6,7 @@
 mod authentication;
 mod builder;
 mod execute;
+mod json;
 mod mutation;
 
 use std::sync::{
@@ -14,7 +15,10 @@ use std::sync::{
 };
 
 pub(crate) use execute::ControlWireResponse;
-pub(crate) use mutation::{MutationGate, MutationWireResponse};
+pub(crate) use json::encode_bounded_json;
+pub(crate) use mutation::{
+    DocumentedMutationResponse, MutationAssessment, MutationGate, MutationOutcome,
+};
 
 use crate::{ConfigError, EndpointSet, auth::TokenStore, rate_limit::RateGovernor};
 
@@ -33,6 +37,7 @@ pub struct Client {
     pub(crate) tokens: Arc<TokenStore>,
     pub(crate) rate_limits: Arc<RateGovernor>,
     pub(crate) mutation_gate: Arc<MutationGate>,
+    pub(crate) max_request_bytes: usize,
     pub(crate) max_response_bytes: usize,
 }
 
