@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Kevin Monaghan
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: MIT-0
 
 use super::*;
 use crate::{ContractId, Symbol, realtime::MarketDataChannel};

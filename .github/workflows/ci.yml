@@ -1,9 +1,5 @@
-# Copyright (C) 2026 Kevin Monaghan. All rights reserved.
-#
-# This file is proprietary and confidential.
-# Unauthorized copying, use, modification, distribution, or disclosure of this file,
-# via any medium, is strictly prohibited except under a written agreement with the
-# copyright owner.
+# SPDX-FileCopyrightText: 2026 Kevin Monaghan
+# SPDX-License-Identifier: MIT-0
 
 name: CI
 
@@ -52,37 +48,6 @@ jobs:
         with:
           fallback: none
           tool: cargo-nextest@0.9.140
-
-      - name: Verify proprietary file headers
-        shell: bash
-        run: |
-          set -euo pipefail
-          status=0
-          while IFS= read -r -d '' file; do
-            if [ "$file" = "Cargo.lock" ]; then
-              continue
-            fi
-            header=$(head -n 12 -- "$file")
-            full_notice=false
-            spdx_notice=false
-            if grep --fixed-strings --quiet \
-              "Copyright (C) 2026 Kevin Monaghan. All rights reserved." <<< "$header" \
-              && grep --ignore-case --fixed-strings --quiet \
-                "proprietary and confidential" <<< "$header"; then
-              full_notice=true
-            fi
-            if grep --fixed-strings --quiet \
-              "SPDX-FileCopyrightText: 2026 Kevin Monaghan" <<< "$header" \
-              && grep --fixed-strings --quiet \
-                "SPDX-License-Identifier: LicenseRef-Proprietary" <<< "$header"; then
-              spdx_notice=true
-            fi
-            if [ "$full_notice" != "true" ] && [ "$spdx_notice" != "true" ]; then
-              echo "::error file=${file}::missing the full proprietary notice or LicenseRef-Proprietary SPDX header"
-              status=1
-            fi
-          done < <(git ls-files -z -- '*.rs' '*.py' '*.sh' '*.toml' '*.md' '*.yml' '*.yaml')
-          exit "$status"
 
       - name: Enforce file-size policy
         run: bash scripts/ci/check_file_sizes.sh

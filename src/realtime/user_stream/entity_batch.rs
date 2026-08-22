@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Kevin Monaghan
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: MIT-0
 
 //! Typed user-sync entity batches shared by bootstraps and `props` deltas.
 

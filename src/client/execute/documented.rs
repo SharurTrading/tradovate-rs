@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Kevin Monaghan
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: MIT-0
 
 //! Safe execution hooks for generated documented REST capabilities.
 

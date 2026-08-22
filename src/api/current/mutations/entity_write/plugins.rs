@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Kevin Monaghan
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: MIT-0
 
 //! Validated create and update states for current user-plugin entities.
 

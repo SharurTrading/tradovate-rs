@@ -1,10 +1,6 @@
 <!--
-Copyright (C) 2026 Kevin Monaghan. All rights reserved.
-
-This file is proprietary and confidential.
-Unauthorized copying, use, modification, distribution, or disclosure of this file,
-via any medium, is strictly prohibited except under a written agreement with the
-copyright owner.
+SPDX-FileCopyrightText: 2026 Kevin Monaghan
+SPDX-License-Identifier: MIT-0
 -->
 
 # Tradovate Rust Client Agent Guide
@@ -21,8 +17,9 @@ models, request validation, and realtime protocol lifecycle. Consumers own tradi
 strategy, routing policy, portfolio and risk truth, storage, GUI state, and translation
 into their own canonical domain.
 
-The repository is private and proprietary under `SharurTrading`. It is not a SHARUR
-engine crate and must not depend on SHARUR or any other consuming application.
+The repository is maintained publicly under `SharurTrading` and licensed under
+MIT-0. It is not a SHARUR engine crate and must not depend on SHARUR or any other
+consuming application.
 
 ## Priority and review severity
 
@@ -63,7 +60,7 @@ Review severities:
 | **TV-AUTOMATION-01** | Automated order builders require the caller to make automated origin explicit and transmit the provider-required `isAutomated` value. The library does not silently default an automated client to manual order origin. |
 | **TV-VALIDATE-01** | Normal CI is deterministic and credential-free. Live probes are feature-gated, ignored, read-only, deliberately invoked, and use no committed captures or account data. Contract, cancellation, race, ambiguity, and recovery tests land with the behavior they validate. |
 | **TV-DOC-01** | Every public item has rustdoc; fallible APIs document `# Errors`; unsafe APIs, if ever approved, document `# Safety`. Non-obvious provider and lifecycle invariants are documented beside the code and in the same change. |
-| **TV-PRIVATE-01** | All original repository content is proprietary, carries the repository header where appropriate, remains in approved private systems, and is not published to crates.io or another public registry. |
+| **TV-LICENSE-01** | Repository-authored source, tests, configuration, and documentation are MIT-0 and carry the repository SPDX header where appropriate. `Cargo.toml`, `LICENSE`, generated headers, and CI checks agree. Third-party material retains its own terms. Cargo registry publishing requires a separate reviewed release-policy change. |
 | **TV-SIZE-01** | Handwritten `src` files target 400 physical lines and may not exceed 600; `lib.rs` and every `mod.rs` may not exceed 200; test files may not exceed 800. Only documented generated files under a `generated/` boundary are exempt. |
 | **TV-SUPPLY-01** | Never suppress an active dependency advisory. A lockfile-only false positive may be ignored only with a checked-in evidence record, a CI feature-graph guard proving the package is inactive under all crate features, and an explicit removal condition. |
 | **TV-CURRENT-01** | The REST surface is generated only from the reviewed, hash-pinned current Partner OpenAPI snapshot. The older API explorer and guide-only fragments are evidence of drift, not implementation inputs. Generated files are checked in, never hand-edited, and must reproduce byte-for-byte under `tools/generate_openapi.py --check`; changing the snapshot or hash requires a semantic, safety, and legacy-divergence review. |
@@ -248,18 +245,20 @@ End reviews with exactly one verdict:
 - `REVIEW: REQUEST_CHANGES — <reason>` when any BLOCKER or MAJOR exists.
 - `REVIEW: PASS — <summary>` when only MINOR/NIT findings remain or none exist.
 
-## Private release gate
+## Release gate
 
-Every internal release originates from a reviewed pull request and the exact merged
+Every release originates from a reviewed pull request and the exact merged
 commit on protected `main`. Before tagging:
 
 1. confirm official provider terms permit the implemented use;
-2. scan the entire reachable history for secrets and proprietary leakage;
-3. verify fixtures are synthetic and documentation is private-safe;
+2. scan the entire reachable history for secrets and unauthorized confidential or
+   third-party material;
+3. verify fixtures are synthetic and documentation is public-safe;
 4. classify the semantic-versioning impact of public API changes;
 5. update version, lockfile, changelog, and release notes in the same PR;
 6. pass formatting, size, strict Clippy, tests, rustdoc, dependency, license,
    advisory, and secret gates;
-7. create an immutable annotated private tag and matching private GitHub release.
+7. create an immutable annotated tag and matching GitHub release.
 
-Do not publish the package to crates.io or another public registry.
+Do not publish the package to crates.io or another registry until a separate
+release-policy change removes `publish = false` and adds the registry gates.

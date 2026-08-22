@@ -1,10 +1,6 @@
 <!--
-Copyright (C) 2026 Kevin Monaghan. All rights reserved.
-
-This file is proprietary and confidential.
-Unauthorized copying, use, modification, distribution, or disclosure of this file,
-via any medium, is strictly prohibited except under a written agreement with the
-copyright owner.
+SPDX-FileCopyrightText: 2026 Kevin Monaghan
+SPDX-License-Identifier: MIT-0
 -->
 
 # Official contract snapshot
@@ -23,3 +19,12 @@ The older `api.tradovate.com` explorer is intentionally not an implementation
 source. Regeneration fails if the pinned file hash changes. Review a new
 official snapshot and its semantic/API-safety differences before updating the
 hash and generated output.
+
+## Third-party status
+
+The snapshot is Tradovate documentation obtained from the official URL above. It is
+not covered by this repository's MIT-0 license and remains subject to Tradovate's
+terms. The snapshot is retained verbatim only as the reviewed generator input; the
+repository does not claim ownership of it or grant downstream rights to it. See the
+repository-level [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) before any
+public distribution.

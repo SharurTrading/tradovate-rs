@@ -1,17 +1,16 @@
 <!--
-Copyright (C) 2026 Kevin Monaghan. All rights reserved.
-
-This file is proprietary and confidential.
-Unauthorized copying, use, modification, distribution, or disclosure of this file,
-via any medium, is strictly prohibited except under a written agreement with the
-copyright owner.
+SPDX-FileCopyrightText: 2026 Kevin Monaghan
+SPDX-License-Identifier: MIT-0
 -->
 
 # Contributing
 
-Contributions are limited to people authorized to access this private repository.
-Every change must follow [`AGENTS.md`](AGENTS.md), remain within the provider-client
-boundary, and arrive through a reviewed pull request.
+Contributions are welcome through reviewed pull requests. Every change must follow
+[`AGENTS.md`](AGENTS.md) and remain within the provider-client boundary.
+
+By intentionally submitting a contribution, you agree that it is licensed under
+the repository's MIT No Attribution License (`MIT-0`) and that you have the right to
+submit it on those terms.
 
 ## Before changing code
 
@@ -94,7 +93,8 @@ Never commit or paste into a pull request:
 - credentials, access tokens, refresh tokens, client secrets, or device secrets;
 - real account, order, position, fill, or billing data;
 - `.env` files, shell transcripts, HAR files, packet captures, or provider dumps;
-- material copied from another proprietary codebase without authorization.
+- material copied from another proprietary or confidential source without
+  authorization.
 
 Use synthetic values in fixtures and redact logs before attaching them. Report a
 suspected leak or vulnerability through the process in [`SECURITY.md`](SECURITY.md),
@@ -121,11 +121,12 @@ not a normal issue.
 - [ ] Public rustdoc and operational documentation are current.
 - [ ] File-size checks pass; functions over 100 lines are identified for review.
 - [ ] The changelog and semantic-versioning impact are recorded.
-- [ ] No live credentials, captures, or proprietary leakage are present.
+- [ ] No live credentials, captures, or unauthorized confidential material is
+      present.
 
 ## Releases
 
-Do not publish this crate publicly. Internal releases are cut only from the exact
-reviewed commit merged to protected `main`, after all quality, supply-chain, and
-secret checks pass. Tags are annotated, immutable, and matched by a private GitHub
-release and changelog entry.
+Releases are cut only from the exact reviewed commit merged to protected `main`,
+after all quality, supply-chain, and secret checks pass. Tags are annotated,
+immutable, and matched by a GitHub release and changelog entry. Cargo registry
+publishing remains disabled until a dedicated release-policy change is reviewed.
