@@ -1,10 +1,6 @@
 <!--
-Copyright (C) 2026 Kevin Monaghan. All rights reserved.
-
-This file is proprietary and confidential.
-Unauthorized copying, use, modification, distribution, or disclosure of this file,
-via any medium, is strictly prohibited except under a written agreement with the
-copyright owner.
+SPDX-FileCopyrightText: 2026 Kevin Monaghan
+SPDX-License-Identifier: MIT-0
 -->
 
 # ADR 0001: Provider-native single-crate architecture
@@ -34,7 +30,7 @@ connection generations, and recovery explicit while remaining small enough to au
 
 ### One focused crate
 
-Start with one private library crate whose intended package name is
+Start with one focused library crate whose intended package name is
 `tradovate-client`. Do not introduce a workspace, protocol crate, model crate, or
 provider-generic abstraction until a real dependency, trust, ownership, or runtime
 boundary exists.

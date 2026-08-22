@@ -1,23 +1,19 @@
 <!--
-Copyright (C) 2026 Kevin Monaghan. All rights reserved.
-
-This file is proprietary and confidential.
-Unauthorized copying, use, modification, distribution, or disclosure of this file,
-via any medium, is strictly prohibited except under a written agreement with the
-copyright owner.
+SPDX-FileCopyrightText: 2026 Kevin Monaghan
+SPDX-License-Identifier: MIT-0
 -->
 
 # Changelog
 
-All notable internal changes to `tradovate-client` are recorded here. The project
-uses [Semantic Versioning](https://semver.org/) for private releases and follows the
+All notable changes to `tradovate-client` are recorded here. The project uses
+[Semantic Versioning](https://semver.org/) for releases and follows the
 structure of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
 ### Added
 
-- Establish the private proprietary repository governance and security boundary.
+- Establish repository governance, security, and contribution boundaries.
 - Define stable `TV-*` architecture, exact-value, authentication, mutation,
   realtime, validation, and maintainability rules.
 - Record the initial single-crate capability-oriented architecture decision.
@@ -73,6 +69,10 @@ structure of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Relicense repository-authored source and documentation under the MIT No
+  Attribution License (`MIT-0`), replace proprietary notices with SPDX headers,
+  and prepare the GitHub repository for public visibility. Third-party contract
+  material retains its own terms.
 - Match the current Partner `AccessTokenRequest` contract: only `name` and
   `password` are required, while `hibpCheck`, `appId`, `appVersion`, `cid`, `sec`,
   and `deviceId` are validated when supplied and otherwise omitted from JSON;

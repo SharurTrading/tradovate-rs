@@ -1,27 +1,31 @@
 <!--
-Copyright (C) 2026 Kevin Monaghan. All rights reserved.
-
-This file is proprietary and confidential.
-Unauthorized copying, use, modification, distribution, or disclosure of this file,
-via any medium, is strictly prohibited except under a written agreement with the
-copyright owner.
+SPDX-FileCopyrightText: 2026 Kevin Monaghan
+SPDX-License-Identifier: MIT-0
 -->
 
 # tradovate-rs
 
-Private, provider-native Rust client development for the official Tradovate API.
+[![CI](https://github.com/SharurTrading/tradovate-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/SharurTrading/tradovate-rs/actions/workflows/ci.yml)
+[![MSRV: Rust 1.95.0](https://img.shields.io/badge/MSRV-Rust%201.95.0-blue.svg?logo=rust)](rust-toolchain.toml)
+[![license: MIT-0](https://img.shields.io/badge/license-MIT--0-blue.svg)](LICENSE)
+[![current REST: 334/350 callable](https://img.shields.io/badge/current%20REST-334%2F350%20callable-brightgreen.svg)](docs/api-coverage-rest.md)
+[![realtime: typed and bounded](https://img.shields.io/badge/realtime-typed%20and%20bounded-brightgreen.svg)](docs/api-coverage-realtime.md)
+
+An async, provider-native Rust client for the official Tradovate API.
 The intended Cargo package name is `tradovate-client`; the `-rs` suffix belongs to
 the repository name, not the crate import path.
 
-This repository is proprietary to Kevin Monaghan and hosted privately under
-`SharurTrading`. It is an independent client and is not affiliated with, endorsed
-by, or sponsored by Tradovate. Provider access and use remain subject to Tradovate's
-terms and entitlements.
+This repository is maintained by `SharurTrading` and licensed under the MIT No
+Attribution License (`MIT-0`). It is an independent client and is not affiliated
+with, endorsed by, or sponsored by Tradovate. Provider access and use remain subject
+to Tradovate's terms and entitlements.
 
 The sole REST implementation authority is the current
 [Tradovate Partner OpenAPI](https://partner.tradovate.com/openapi.json), pinned in
 this repository with its retrieval date and digest. Repository documentation records
 the additional safety and lifecycle guarantees supplied by this client.
+
+The minimum supported Rust version is 1.95.0.
 
 ## Status
 
@@ -316,16 +320,20 @@ HAR files, or packet captures.
 
 ## Versioning and distribution
 
-Internal releases follow Semantic Versioning. Source-breaking API changes require a
+Releases follow Semantic Versioning. Source-breaking API changes require a
 new major version; additive APIs and compatible fixes use minor and patch versions.
 Provider contract changes may still require operational changes, so review the
-private changelog before updating.
+changelog before updating.
 
-This package is private and must not be published to crates.io, docs.rs, or another
-public registry. Approved consumers use the private repository or an approved
-private package channel.
+The source repository is public. Registry publishing remains deliberately disabled
+with `publish = false`; consumers can use a tagged Git dependency until maintainers
+approve and document a separate crates.io release policy.
 
 ## License
 
-Proprietary and confidential. Copyright (C) 2026 Kevin Monaghan. All rights reserved.
-See [`LICENSE`](LICENSE).
+The repository-authored source and documentation are available under the
+[MIT No Attribution License (`MIT-0`)](LICENSE). The pinned Tradovate contract
+snapshot is third-party documentation and is not relicensed; see
+[`RELICENSING.md`](RELICENSING.md),
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and
+[`spec/README.md`](spec/README.md).

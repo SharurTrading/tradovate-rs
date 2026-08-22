@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Kevin Monaghan
-# SPDX-License-Identifier: LicenseRef-Proprietary
+# SPDX-License-Identifier: MIT-0
 
 [package]
 name = "tradovate-client"
@@ -7,9 +7,9 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 publish = false
-description = "Private, exact-decimal Rust client for current Tradovate REST and realtime APIs"
+description = "Exact-decimal Rust client for current Tradovate REST and realtime APIs"
 repository = "https://github.com/SharurTrading/tradovate-rs"
-license = "LicenseRef-Proprietary"
+license = "MIT-0"
 
 [dependencies]
 futures-util = "0.3.33"
