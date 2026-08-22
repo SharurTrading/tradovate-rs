@@ -1,0 +1,253 @@
+# SPDX-FileCopyrightText: 2026 Kevin Monaghan
+# SPDX-License-Identifier: MIT-0
+#
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit cloud-review policy for tradovate-rs. AGENTS.md is the repository
+# contract; these path instructions are a high-signal index into its TV-* rules.
+
+language: "en-US"
+
+tone_instructions: "Cite the exact AGENTS.md TV-* rule ID for every finding. Use the repository BLOCKER/MAJOR/MINOR/NIT severities, keep findings concrete and actionable, and treat preferences already enforced by rustfmt or strict Clippy as nits or omit them."
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: true
+  poem: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "^main$"
+
+  path_filters:
+    - "!target/**"
+    - "!Cargo.lock"
+    # Third-party pinned input and deterministic generated output are reviewed
+    # through provenance/hash checks and the generator rather than noisy line review.
+    - "!spec/official/**"
+    - "!src/api/current/generated/**"
+    - "!docs/api-coverage-rest.md"
+
+  path_instructions:
+    - path: "**/*.rs"
+      instructions: |
+        Apply the TV-* rules in AGENTS.md and cite the exact rule for every finding.
+        BLOCKER findings include:
+        - f32/f64 or a float round-trip for prices, money, balances, margin, fees,
+          commissions, P&L, or exact provider decimal tokens (TV-DECIMAL-01).
+        - Credentials or tokens in Debug, logs, errors, persistence, fixtures, or
+          public getters; plaintext non-loopback transport (TV-SECRET-01).
+        - A mutation retry, ambiguous send treated as unsent, or a mutation outcome
+          resolved without operation-specific success evidence (TV-EXEC-01,
+          TV-RESPONSE-01).
+        - Unbounded remote input, queues, pending maps, response reads, frame/event
+          aggregation, or reconnect loops (TV-TRANSPORT-01, TV-PAT-BOUNDS-01).
+        - Raw String/integer public identities, implicit account/instrument routing,
+          or silent environment mixing (TV-IDENTITY-01, TV-ENVIRONMENT-01).
+        MAJOR findings include:
+        - A lock guard across .await, a hidden/blocking Tokio runtime, an orphaned
+          task, or cancellation without explicit admission/commit handling
+          (TV-PAT-ASYNC-01, TV-PAT-RAII-01, TV-RUNTIME-01).
+        - unwrap, expect, panic, unchecked indexing, or assertions on expected
+          caller/provider input in production code (TV-ANTI-PANIC-01).
+        - Public raw JSON/endpoints/command strings, leaked dependency transport
+          types, giant capability buckets, or unjustified generic provider traits
+          (TV-ANTI-RAW-01, TV-BOUNDARY-01, TV-ANTI-BUCKET-01,
+          TV-ANTI-ABSTRACT-01).
+        - New unsafe without a reviewed ADR and a minimal safe boundary.
+        Public items need rustdoc and # Errors/# Safety sections where applicable
+        (TV-DOC-01). Unknown response enum values must remain representable, while
+        unknown request values must never be transmitted (TV-PAT-FUTURE-01).
+        Do not report rustfmt or strict-Clippy noise already enforced by CI. Do flag
+        an unjustified allow/expect lint, ignored test, or rustfmt suppression
+        (TV-ANTI-SUPPRESS-01).
+
+    - path: "src/auth/**/*.rs"
+      instructions: |
+        Treat authentication as lifecycle and secret-handling code, not a DTO-only
+        layer. The session store is the sole token writer. Verify revision-fenced
+        login, replacement, expiry, invalidation, and single-flight renewal; stale
+        work must not overwrite or erase a newer session (TV-AUTH-01,
+        TV-PAT-STATE-01). Refresh and WebSocket authorization must recheck revision
+        and expiry immediately before transmission. Only ambiguous,
+        transmission-started refresh failure may invalidate the basis.
+        Credential Debug output is presence-only/redacted. The pinned current
+        AccessTokenRequest requires only name and password; hibpCheck, appId,
+        appVersion, cid, sec, and deviceId remain optional, are validated when
+        supplied, and are omitted rather than serialized as null when absent
+        (TV-SECRET-01, TV-CURRENT-01).
+
+    - path: "src/client/**/*.rs"
+      instructions: |
+        Query and mutation execution must remain visibly separate
+        (TV-PAT-CQS-01). The shared reqwest client explicitly disables dependency
+        retries. A mutation permit is atomic across Client clones, remains armed
+        through transmission and response validation, and installs the shared
+        reconciliation latch on cancellation or any uncertain post-admission result
+        (TV-EXEC-01). Response bodies are bounded while streaming. HTTP success is
+        insufficient: malformed, contradictory, penalty, business-error, and
+        missing-completion evidence must fail closed (TV-RESPONSE-01,
+        TV-PENALTY-01).
+
+    - path: "src/api/**/*.rs"
+      instructions: |
+        Public operations must match only the reviewed current Partner contract,
+        use validated provider-native IDs/values, and preserve the query/mutation/
+        lifecycle classification (TV-CURRENT-01, TV-IDENTITY-01,
+        TV-PAT-CQS-01). Money-moving requests require explicit account and
+        instrument identity. Automated order paths require explicit isAutomated
+        origin (TV-AUTOMATION-01). Mutation completion evidence must be
+        operation-specific and request-aware: mismatched IDs, incomplete batches,
+        explicit nulls, unknown failure codes, or success/failure contradictions
+        stay ambiguous and keep the reconciliation latch armed (TV-EXEC-01,
+        TV-RESPONSE-01). Never suggest making a documentation-blocked endpoint raw
+        or callable by guessing omitted provider semantics (TV-ANTI-RAW-01).
+
+    - path: "src/rate_limit/**/*.rs"
+      instructions: |
+        Admission and cooldown state is shared across Client clones. Every actual
+        outbound attempt consumes the correct audience, endpoint, failed-only, and
+        account-scoped budget atomically; proven-unsent work may roll back, while
+        cancellation/ambiguity is charged conservatively (TV-RATE-01,
+        TV-PAT-RAII-01). Mutations never wait into a later send. HTTP 429 installs
+        the documented global stop and never enables a retry. Penalty p-time uses
+        one exact monotonic deadline and p-captcha requires operator action
+        (TV-PENALTY-01). Flag lost-wakeup races and partial multi-window admission.
+
+    - path: "src/realtime/**/*.rs"
+      instructions: |
+        Apply all twelve realtime lifecycle requirements in AGENTS.md. In
+        particular: authenticate before readiness; recheck the token immediately
+        before authorization; use one generation for all tasks/events; fence every
+        write with the independent monotonic 2.5-second heartbeat deadline; issue
+        exactly one user/syncrequest; and tear down the whole generation on any
+        reader/writer/protocol/liveness/request-abandon failure (TV-AUTH-01,
+        TV-TRANSPORT-01, TV-SYNC-01).
+        Bound during deserialization, before materializing attacker-controlled
+        overflow values. Pending requests, frame message counts, aggregate bytes,
+        command/event queues, and close waits all need named limits and fail-closed
+        overflow behavior (TV-PAT-BOUNDS-01). Realtime owns no canonical
+        subscription, order, position, or account truth and does not auto-reconnect;
+        callers replace generations and replay canonical subscriptions after an
+        explicit recovery boundary (TV-SUBSCRIPTION-01, TV-ANTI-TRUTH-01).
+        Raw JSON remains private and unsupported semantics invalidate the generation
+        rather than publishing partial truth (TV-ANTI-RAW-01).
+
+    - path: "**/tests/**/*.rs"
+      instructions: |
+        Tests use synthetic data and deterministic loopback transports only; never
+        accept committed live credentials, payload captures, HAR files, or account
+        data (TV-VALIDATE-01, TV-SECRET-01). Verify tests are falsifiable and cover
+        exact request paths/headers/bodies plus missing, null, malformed, unknown,
+        contradictory, oversized, timeout, cancellation, and ambiguity cases where
+        applicable (TV-PAT-TEST-01). Lifecycle tests should exercise stale token
+        revisions, concurrent mutations, request abandonment, queue overflow,
+        heartbeat/liveness failure, bootstrap-before-delta ordering, and generation
+        teardown. Flag weakened assertions or fixtures that make a failure path pass
+        without exercising the claimed behavior.
+
+    - path: "tests/**/*.rs"
+      instructions: |
+        Public integration tests must exercise the consumer-facing API through exact
+        synthetic loopback wire contracts. No test may require credentials or live
+        Tradovate access in normal CI (TV-VALIDATE-01, TV-PAT-TEST-01). Ensure a
+        mutation test proves single transmission and the correct reconciliation
+        state after cancellation, malformed controls, or ambiguous completion.
+
+    - path: "tools/generate_openapi.py"
+      instructions: |
+        This is deterministic repository tooling, not runtime code. It must use only
+        the reviewed, hash-pinned current Partner OpenAPI snapshot, perform no network
+        fetch, and emit byte-stable Rust plus the exhaustive REST coverage matrix
+        (TV-CURRENT-01). Never suggest hand-editing generated Rust. Schema policy,
+        identity overrides, secret handling, endpoint classification, and callable
+        mutation policies must be changed in the generator and regenerated together.
+        Preserve one canonical terminal newline and cross-process determinism.
+
+    - path: "**/Cargo.toml"
+      instructions: |
+        Dependencies stay minimal, locked, license-approved, and narrowly featured.
+        Flag default features that widen TLS/network behavior, automatic retry, or
+        downstream Serde semantics. In particular, exact Decimal adapters must not
+        be bypassed by a dependency-global serialization feature without documented
+        compatibility analysis (TV-PAT-EXACT-01). Preserve MSRV 1.95.0 and
+        publish=false unless a separate reviewed registry-release change supplies
+        all release gates (TV-LICENSE-01, TV-SUPPLY-01).
+
+    - path: "deny.toml"
+      instructions: |
+        Never suppress an active advisory or silently widen allowed licenses or
+        registries (TV-SUPPLY-01). A lockfile-only advisory exception needs a
+        checked-in evidence record, a CI feature-graph proof that the package is
+        inactive under all crate features, narrow version scope, and an explicit
+        removal condition.
+
+    - path: "**/*.md"
+      instructions: |
+        Documentation must match committed behavior and the exhaustive current-only
+        coverage manifest. Flag claims that a documentation-blocked operation is
+        callable, raw payloads are public, realtime reconnect/replay is automatic,
+        or live Tradovate testing occurred without explicit evidence
+        (TV-CURRENT-01, TV-DOC-01, TV-VALIDATE-01). Keep the prominent pre-release
+        and no-live-testing warning until deliberate live validation is completed.
+        The changelog may remain an empty pre-release placeholder until the first
+        release. Repository-authored material is MIT-0; third-party material keeps
+        its own terms (TV-LICENSE-01).
+
+    - path: "LICENSE"
+      instructions: |
+        Preserve the canonical MIT No Attribution (MIT-0) text. Flag proprietary or
+        confidential replacement language, LicenseRef-Proprietary, incompatible
+        terms, or a claim that this license relicenses the third-party Tradovate
+        OpenAPI snapshot (TV-LICENSE-01).
+
+    - path: ".github/workflows/**"
+      instructions: |
+        CI is deterministic, credential-free, least-privilege, and GitHub-hosted on
+        ubuntu-latest (TV-VALIDATE-01). Flag self-hosted runners, live provider
+        access, writable permissions without a demonstrated need, unpinned actions,
+        persisted checkout credentials, or weakened fmt/check/strict-Clippy/test/
+        rustdoc/supply-chain/secret gates. The repository owner intentionally does
+        not want a dedicated SPDX/header CI guard; do not request one. Use actionlint
+        for workflow correctness.
+
+    - path: "**/*.sh"
+      instructions: |
+        Shell checks must be deterministic, quote expansions, propagate failures,
+        avoid secrets, and use explicit bounded targets. Prefer set -euo pipefail
+        where compatible. Do not suggest a dedicated SPDX/header CI guard.
+
+  tools:
+    clippy:
+      enabled: true
+    ruff:
+      enabled: true
+    actionlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    markdownlint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    gitleaks:
+      enabled: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+  learnings:
+    scope: "local"
+  issues:
+    scope: "local"
+  pull_requests:
+    scope: "local"
+  web_search:
+    enabled: true
