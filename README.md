@@ -77,15 +77,15 @@ not read `.env` files or discover secrets from ambient process state.
 ```rust
 use tradovate_client::{Client, Environment, auth::Credentials};
 
-# async fn connect() -> Result<(), Box<dyn std::error::Error>> {
-let credentials = Credentials::builder("user", "dedicated-api-password")
-    .build()?;
+async fn connect() -> Result<(), Box<dyn std::error::Error>> {
+    let credentials = Credentials::builder("user", "dedicated-api-password")
+        .build()?;
 
-let client = Client::builder(Environment::Demo).build()?;
-let session = client.authenticate(&credentials).await?;
-println!("authenticated user {}", session.user_id());
-# Ok(())
-# }
+    let client = Client::builder(Environment::Demo).build()?;
+    let session = client.authenticate(&credentials).await?;
+    println!("authenticated user {}", session.user_id());
+    Ok(())
+}
 ```
 
 The current Partner schema requires only `name` and `password`. `hibpCheck`,
@@ -97,17 +97,17 @@ key operationally; provide those exact values when applicable:
 ```rust
 use tradovate_client::{DeviceId, auth::Credentials};
 
-# fn credentials() -> Result<Credentials, Box<dyn std::error::Error>> {
-let credentials = Credentials::builder("user", "dedicated-api-password")
-    .app_id("registered-api-key-name")
-    .app_version("1.0")
-    .numeric_client_id(123)
-    .secret("issued-api-key-secret")
-    .device_id(DeviceId::new("stable-device-id")?)
-    .hibp_check(true)
-    .build()?;
-# Ok(credentials)
-# }
+fn credentials() -> Result<Credentials, Box<dyn std::error::Error>> {
+    let credentials = Credentials::builder("user", "dedicated-api-password")
+        .app_id("registered-api-key-name")
+        .app_version("1.0")
+        .numeric_client_id(123)
+        .secret("issued-api-key-secret")
+        .device_id(DeviceId::new("stable-device-id")?)
+        .hibp_check(true)
+        .build()?;
+    Ok(credentials)
+}
 ```
 
 ## Architecture

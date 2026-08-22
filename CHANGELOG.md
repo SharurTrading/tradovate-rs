@@ -82,6 +82,8 @@ structure of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Make CI's strict Rust policy explicit with all-target checking, formatting,
   `clippy::all`, `clippy::pedantic`, unsafe-code forbiddance, and an HTTP
   proxy-isolation invariant alongside the existing test and supply-chain gates.
+- Render README examples as directly copyable Rust without visible rustdoc-only
+  hidden-line markers.
 
 ### Known limitations
 
