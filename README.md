@@ -11,6 +11,12 @@ SPDX-License-Identifier: MIT-0
 [![current REST: 334/350 callable](https://img.shields.io/badge/current%20REST-334%2F350%20callable-brightgreen.svg)](docs/api-coverage-rest.md)
 [![realtime: typed and bounded](https://img.shields.io/badge/realtime-typed%20and%20bounded-brightgreen.svg)](docs/api-coverage-realtime.md)
 
+> [!WARNING]
+> **Pre-release:** no live Tradovate environment testing has been conducted.
+> Validation currently consists of deterministic synthetic fixtures, loopback
+> transport tests, and reviewed contract and schema checks. Do not use this crate
+> for live trading without independent validation.
+
 An async, provider-native Rust client for the official Tradovate API.
 The intended Cargo package name is `tradovate-client`; the `-rs` suffix belongs to
 the repository name, not the crate import path.
