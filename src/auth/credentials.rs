@@ -106,7 +106,10 @@ impl fmt::Debug for Credentials {
             .field("client_id", &self.client_id.as_ref().map(|_| "[REDACTED]"))
             .field("secret", &self.secret.as_ref().map(|_| "[REDACTED]"))
             .field("device_id", &self.device_id.as_ref().map(|_| "[REDACTED]"))
-            .field("hibp_check", &self.hibp_check)
+            .field(
+                "hibp_check",
+                &self.hibp_check.as_ref().map(|_| "[REDACTED]"),
+            )
             .finish()
     }
 }
@@ -214,7 +217,10 @@ impl fmt::Debug for CredentialsBuilder {
             .field("client_id", &self.client_id.as_ref().map(|_| "[REDACTED]"))
             .field("secret", &self.secret.as_ref().map(|_| "[REDACTED]"))
             .field("device_id", &self.device_id.as_ref().map(|_| "[REDACTED]"))
-            .field("hibp_check", &self.hibp_check)
+            .field(
+                "hibp_check",
+                &self.hibp_check.as_ref().map(|_| "[REDACTED]"),
+            )
             .finish()
     }
 }

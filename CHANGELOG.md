@@ -77,8 +77,8 @@ structure of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `password` are required, while `hibpCheck`, `appId`, `appVersion`, `cid`, `sec`,
   and `deviceId` are validated when supplied and otherwise omitted from JSON;
   accept the documented 512-character password ceiling.
-- Redact application, client, secret, and device credential metadata from both
-  builder and built-credential debug output.
+- Redact application, client, secret, device, and HIBP credential metadata from
+  both builder and built-credential debug output.
 - Make CI's strict Rust policy explicit with all-target checking, formatting,
   `clippy::all`, `clippy::pedantic`, unsafe-code forbiddance, and an HTTP
   proxy-isolation invariant alongside the existing test and supply-chain gates.

@@ -99,6 +99,7 @@ fn debug_redacts_every_sensitive_value() {
         .app_version("secret-app-version")
         .numeric_client_id(123)
         .secret("secret-key")
+        .hibp_check(true)
         .device_id(
             DeviceId::new("secret-device")
                 .unwrap_or_else(|error| panic!("fixture device ID must validate: {error}")),
@@ -111,6 +112,8 @@ fn debug_redacts_every_sensitive_value() {
     assert!(!builder_debug.contains("secret-app-id"));
     assert!(!builder_debug.contains("secret-app-version"));
     assert!(!builder_debug.contains("123"));
+    assert!(!builder_debug.contains("hibp_check: Some(true)"));
+    assert!(builder_debug.contains("hibp_check: Some(\"[REDACTED]\")"));
 
     let credentials = builder
         .build()
@@ -123,6 +126,8 @@ fn debug_redacts_every_sensitive_value() {
     assert!(!credentials_debug.contains("secret-app-id"));
     assert!(!credentials_debug.contains("secret-app-version"));
     assert!(!credentials_debug.contains("123"));
+    assert!(!credentials_debug.contains("hibp_check: Some(true)"));
+    assert!(credentials_debug.contains("hibp_check: Some(\"[REDACTED]\")"));
 }
 
 #[test]
