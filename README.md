@@ -75,21 +75,38 @@ The caller owns credentials, their storage, and the Tokio runtime. The crate doe
 not read `.env` files or discover secrets from ambient process state.
 
 ```rust
-use tradovate_client::{Client, DeviceId, Environment, auth::Credentials};
+use tradovate_client::{Client, Environment, auth::Credentials};
 
 # async fn connect() -> Result<(), Box<dyn std::error::Error>> {
 let credentials = Credentials::builder("user", "dedicated-api-password")
-    .app_id("my-app")
-    .app_version("1.0")
-    .numeric_client_id(123)
-    .secret("api-key-secret")
-    .device_id(DeviceId::new("stable-device-id")?)
     .build()?;
 
 let client = Client::builder(Environment::Demo).build()?;
 let session = client.authenticate(&credentials).await?;
 println!("authenticated user {}", session.user_id());
 # Ok(())
+# }
+```
+
+The current Partner schema requires only `name` and `password`. `hibpCheck`,
+`appId`, `appVersion`, `cid`, `sec`, and `deviceId` are optional and are omitted
+from the request rather than sent as `null` unless their builder methods are
+called. Partner API-key deployments may still require the metadata issued for that
+key operationally; provide those exact values when applicable:
+
+```rust
+use tradovate_client::{DeviceId, auth::Credentials};
+
+# fn credentials() -> Result<Credentials, Box<dyn std::error::Error>> {
+let credentials = Credentials::builder("user", "dedicated-api-password")
+    .app_id("registered-api-key-name")
+    .app_version("1.0")
+    .numeric_client_id(123)
+    .secret("issued-api-key-secret")
+    .device_id(DeviceId::new("stable-device-id")?)
+    .hibp_check(true)
+    .build()?;
+# Ok(credentials)
 # }
 ```
 
@@ -268,12 +285,14 @@ python3 tools/generate_openapi.py --check
 cargo fmt --all -- --check
 bash scripts/ci/check_file_sizes.sh
 cargo check --no-default-features --locked
-cargo clippy --all-targets --all-features --locked -- -D warnings -D clippy::pedantic -D clippy::await_holding_lock -D clippy::expect_used -D clippy::unwrap_used
+cargo check --all-targets --all-features --locked
+cargo clippy --all-targets --all-features --locked -- -D warnings -D clippy::all -D clippy::pedantic -D clippy::await_holding_lock -D clippy::expect_used -D clippy::unwrap_used -F unsafe-code
 RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --locked
 cargo nextest run --all-features --locked --no-fail-fast
 cargo test --doc --all-features --locked
 cargo deny --locked check
-cargo audit --file Cargo.lock --deny warnings
+cargo tree --locked --all-features --edges normal,build,dev --prefix none | grep --extended-regexp '^rkyv v0\.7\.' && exit 1 || true
+cargo audit --file Cargo.lock --deny warnings --ignore RUSTSEC-2026-0235
 gitleaks git --no-banner --redact --log-opts="--all" .
 ```
 
