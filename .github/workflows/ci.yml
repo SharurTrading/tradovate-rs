@@ -87,31 +87,40 @@ jobs:
       - name: Enforce file-size policy
         run: bash scripts/ci/check_file_sizes.sh
 
-      - name: Prove dependency-owned HTTP retries are disabled
+      - name: Prove shared HTTP client safety invariants
         shell: bash
         run: |
           if ! grep --fixed-strings --quiet ".retry(reqwest::retry::never())" src/client/builder.rs; then
             echo "::error::the shared reqwest client must explicitly disable dependency-owned retries"
             exit 1
           fi
+          if ! grep --fixed-strings --quiet ".no_proxy()" src/client/builder.rs; then
+            echo "::error::the shared reqwest client must disable ambient proxy discovery"
+            exit 1
+          fi
 
       - name: Verify generated current API
         run: python3 tools/generate_openapi.py --check
 
-      - name: cargo fmt
+      - name: cargo fmt --all -- --check
         run: cargo fmt --all -- --check
 
       - name: cargo check without default features
         run: cargo check --no-default-features --locked
 
-      - name: cargo clippy (all targets and features)
+      - name: cargo check (all targets and features)
+        run: cargo check --all-targets --all-features --locked
+
+      - name: cargo clippy (all targets and features, strict)
         run: >-
           cargo clippy --all-targets --all-features --locked --
           -D warnings
+          -D clippy::all
           -D clippy::pedantic
           -D clippy::await_holding_lock
           -D clippy::expect_used
           -D clippy::unwrap_used
+          -F unsafe-code
 
       - name: cargo doc
         env:

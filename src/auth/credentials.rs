@@ -9,6 +9,13 @@ use secrecy::{ExposeSecret, SecretString};
 
 use crate::{ConfigError, DeviceId, Error};
 
+// Current field limits (accessed 2026-08-22):
+// https://partner.tradovate.com/api/rest-api-endpoints/authentication/access-token-request
+// The pinned component identifies required fields but does not carry these maximums.
+const SHORT_FIELD_LIMIT: usize = 64;
+const PASSWORD_LIMIT: usize = 512;
+const API_SECRET_LIMIT: usize = 8_192;
+
 /// Explicit wire representation for Tradovate's inconsistently documented `cid`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -21,16 +28,20 @@ pub(crate) enum ApiClientId {
 
 /// Credentials for Tradovate's direct API-key token flow.
 ///
+/// The current Partner schema requires only the account name and password.
+/// Application, client, secret, device, and HIBP metadata is transmitted only
+/// when the corresponding builder method is called.
+///
 /// Secret values have no public getters and all debug output is redacted.
 pub struct Credentials {
     name: SecretString,
     password: SecretString,
-    app_id: String,
-    app_version: String,
-    client_id: ApiClientId,
-    secret: SecretString,
-    device_id: DeviceId,
-    hibp_check: bool,
+    app_id: Option<String>,
+    app_version: Option<String>,
+    client_id: Option<ApiClientId>,
+    secret: Option<SecretString>,
+    device_id: Option<DeviceId>,
+    hibp_check: Option<bool>,
 }
 
 impl Credentials {
@@ -44,7 +55,7 @@ impl Credentials {
             client_id: None,
             secret: None,
             device_id: None,
-            hibp_check: true,
+            hibp_check: None,
         }
     }
 
@@ -56,27 +67,27 @@ impl Credentials {
         self.password.expose_secret()
     }
 
-    pub(crate) fn app_id(&self) -> &str {
-        &self.app_id
+    pub(crate) fn app_id(&self) -> Option<&str> {
+        self.app_id.as_deref()
     }
 
-    pub(crate) fn app_version(&self) -> &str {
-        &self.app_version
+    pub(crate) fn app_version(&self) -> Option<&str> {
+        self.app_version.as_deref()
     }
 
-    pub(crate) const fn client_id(&self) -> &ApiClientId {
-        &self.client_id
+    pub(crate) const fn client_id(&self) -> Option<&ApiClientId> {
+        self.client_id.as_ref()
     }
 
-    pub(crate) fn secret(&self) -> &str {
-        self.secret.expose_secret()
+    pub(crate) fn secret(&self) -> Option<&str> {
+        self.secret.as_ref().map(ExposeSecret::expose_secret)
     }
 
-    pub(crate) const fn device_id(&self) -> &DeviceId {
-        &self.device_id
+    pub(crate) const fn device_id(&self) -> Option<&DeviceId> {
+        self.device_id.as_ref()
     }
 
-    pub(crate) const fn hibp_check(&self) -> bool {
+    pub(crate) const fn hibp_check(&self) -> Option<bool> {
         self.hibp_check
     }
 }
@@ -87,12 +98,18 @@ impl fmt::Debug for Credentials {
             .debug_struct("Credentials")
             .field("name", &"[REDACTED]")
             .field("password", &"[REDACTED]")
-            .field("app_id", &self.app_id)
-            .field("app_version", &self.app_version)
-            .field("client_id", &"[REDACTED]")
-            .field("secret", &"[REDACTED]")
-            .field("device_id", &"[REDACTED]")
-            .field("hibp_check", &self.hibp_check)
+            .field("app_id", &self.app_id.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "app_version",
+                &self.app_version.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("client_id", &self.client_id.as_ref().map(|_| "[REDACTED]"))
+            .field("secret", &self.secret.as_ref().map(|_| "[REDACTED]"))
+            .field("device_id", &self.device_id.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "hibp_check",
+                &self.hibp_check.as_ref().map(|_| "[REDACTED]"),
+            )
             .finish()
     }
 }
@@ -107,49 +124,49 @@ pub struct CredentialsBuilder {
     client_id: Option<ApiClientId>,
     secret: Option<SecretString>,
     device_id: Option<DeviceId>,
-    hibp_check: bool,
+    hibp_check: Option<bool>,
 }
 
 impl CredentialsBuilder {
-    /// Sets the application identifier registered with Tradovate.
+    /// Sets the optional application identifier registered with Tradovate.
     pub fn app_id(mut self, value: impl Into<String>) -> Self {
         self.app_id = Some(value.into());
         self
     }
 
-    /// Sets the application version sent to Tradovate.
+    /// Sets the optional application version sent to Tradovate.
     pub fn app_version(mut self, value: impl Into<String>) -> Self {
         self.app_version = Some(value.into());
         self
     }
 
-    /// Sets a numeric Tradovate client identifier.
+    /// Sets an optional numeric Tradovate client identifier.
     pub fn numeric_client_id(mut self, value: u64) -> Self {
         self.client_id = Some(ApiClientId::Numeric(value));
         self
     }
 
-    /// Sets a text Tradovate client identifier for compatible deployments.
+    /// Sets an optional text Tradovate client identifier for compatible deployments.
     pub fn text_client_id(mut self, value: impl Into<String>) -> Self {
         self.client_id = Some(ApiClientId::Text(value.into()));
         self
     }
 
-    /// Sets the API-key secret.
+    /// Sets the optional API-key secret.
     pub fn secret(mut self, value: impl Into<String>) -> Self {
         self.secret = Some(SecretString::from(value.into()));
         self
     }
 
-    /// Sets the stable device identifier.
+    /// Sets the optional stable device identifier.
     pub fn device_id(mut self, value: DeviceId) -> Self {
         self.device_id = Some(value);
         self
     }
 
-    /// Controls the provider's Have-I-Been-Pwned password check.
+    /// Sets the optional provider Have-I-Been-Pwned password-check flag.
     pub const fn hibp_check(mut self, enabled: bool) -> Self {
-        self.hibp_check = enabled;
+        self.hibp_check = Some(enabled);
         self
     }
 
@@ -157,37 +174,30 @@ impl CredentialsBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Configuration`] when a required value is missing,
-    /// empty, padded with whitespace, or contains control characters.
+    /// Returns [`Error::Configuration`] when a required value or a supplied
+    /// optional value is empty, padded with whitespace, too long, or contains
+    /// control characters.
     pub fn build(self) -> Result<Credentials, Error> {
-        validate_secret("name", self.name.expose_secret(), 64)?;
-        validate_secret("password", self.password.expose_secret(), 64)?;
-        let app_id = require_text("app_id", self.app_id, 64)?;
-        let app_version = require_text("app_version", self.app_version, 64)?;
-        let client_id = self.client_id.ok_or(ConfigError::InvalidSetting {
-            field: "cid",
-            reason: "is required",
-        })?;
-        if let ApiClientId::Text(value) = &client_id {
-            validate_text("cid", value, 64)?;
+        validate_secret("name", self.name.expose_secret(), SHORT_FIELD_LIMIT)?;
+        validate_secret("password", self.password.expose_secret(), PASSWORD_LIMIT)?;
+        let app_id = validate_optional_text("app_id", self.app_id, SHORT_FIELD_LIMIT)?;
+        let app_version =
+            validate_optional_text("app_version", self.app_version, SHORT_FIELD_LIMIT)?;
+        let client_id = self.client_id;
+        if let Some(ApiClientId::Text(value)) = &client_id {
+            validate_text("cid", value, SHORT_FIELD_LIMIT)?;
         }
-        let secret = self.secret.ok_or(ConfigError::InvalidSetting {
-            field: "sec",
-            reason: "is required",
-        })?;
-        validate_secret("sec", secret.expose_secret(), 8_192)?;
-        let device_id = self.device_id.ok_or(ConfigError::InvalidSetting {
-            field: "device_id",
-            reason: "is required",
-        })?;
+        if let Some(secret) = self.secret.as_ref() {
+            validate_secret("sec", secret.expose_secret(), API_SECRET_LIMIT)?;
+        }
         Ok(Credentials {
             name: self.name,
             password: self.password,
             app_id,
             app_version,
             client_id,
-            secret,
-            device_id,
+            secret: self.secret,
+            device_id: self.device_id,
             hibp_check: self.hibp_check,
         })
     }
@@ -199,26 +209,30 @@ impl fmt::Debug for CredentialsBuilder {
             .debug_struct("CredentialsBuilder")
             .field("name", &"[REDACTED]")
             .field("password", &"[REDACTED]")
-            .field("app_id", &self.app_id)
-            .field("app_version", &self.app_version)
+            .field("app_id", &self.app_id.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "app_version",
+                &self.app_version.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("client_id", &self.client_id.as_ref().map(|_| "[REDACTED]"))
             .field("secret", &self.secret.as_ref().map(|_| "[REDACTED]"))
             .field("device_id", &self.device_id.as_ref().map(|_| "[REDACTED]"))
-            .field("hibp_check", &self.hibp_check)
+            .field(
+                "hibp_check",
+                &self.hibp_check.as_ref().map(|_| "[REDACTED]"),
+            )
             .finish()
     }
 }
 
-fn require_text(
+fn validate_optional_text(
     field: &'static str,
     value: Option<String>,
     max_len: usize,
-) -> Result<String, ConfigError> {
-    let value = value.ok_or(ConfigError::InvalidSetting {
-        field,
-        reason: "is required",
-    })?;
-    validate_text(field, &value, max_len)?;
+) -> Result<Option<String>, ConfigError> {
+    if let Some(value) = value.as_deref() {
+        validate_text(field, value, max_len)?;
+    }
     Ok(value)
 }
 
@@ -244,37 +258,5 @@ fn validate_text(field: &'static str, value: &str, max_len: usize) -> Result<(),
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn debug_redacts_every_sensitive_value() {
-        let builder = Credentials::builder("secret-user", "secret-password")
-            .app_id("sample")
-            .app_version("1.0")
-            .numeric_client_id(123)
-            .secret("secret-key")
-            .device_id(DeviceId::new("secret-device").unwrap_or_else(|error| panic!("{error}")));
-        let debug = format!("{builder:?}");
-        assert!(!debug.contains("secret-user"));
-        assert!(!debug.contains("secret-password"));
-        assert!(!debug.contains("secret-key"));
-        assert!(!debug.contains("secret-device"));
-    }
-
-    #[test]
-    fn official_wire_length_limits_are_enforced() {
-        let oversized = "x".repeat(65);
-        let result = Credentials::builder(oversized, "password")
-            .app_id("sample")
-            .app_version("1.0")
-            .numeric_client_id(123)
-            .secret("secret-key")
-            .device_id(
-                DeviceId::new("synthetic-device")
-                    .unwrap_or_else(|error| panic!("fixture device ID: {error}")),
-            )
-            .build();
-        assert!(matches!(result, Err(Error::Configuration(_))));
-    }
-}
+#[path = "credentials/tests.rs"]
+mod tests;

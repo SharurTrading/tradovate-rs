@@ -8,15 +8,10 @@
 //! portfolio truth.
 //!
 //! ```no_run
-//! use tradovate_client::{Client, DeviceId, Environment, auth::Credentials};
+//! use tradovate_client::{Client, Environment, auth::Credentials};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let credentials = Credentials::builder("user", "dedicated-api-password")
-//!     .app_id("my-app")
-//!     .app_version("1.0")
-//!     .numeric_client_id(123)
-//!     .secret("api-key-secret")
-//!     .device_id(DeviceId::new("stable-device-id")?)
 //!     .build()?;
 //! let client = Client::builder(Environment::Demo).build()?;
 //! let session = client.authenticate(&credentials).await?;

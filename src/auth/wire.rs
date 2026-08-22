@@ -7,21 +7,26 @@ use jiff::Timestamp;
 use serde::{Serialize, Serializer};
 
 use super::{ApiClientId, Credentials};
-use crate::UserId;
 use crate::client::ControlWireResponse;
+use crate::{DeviceId, UserId};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AccessTokenRequest<'a> {
     name: &'a str,
     password: &'a str,
-    app_id: &'a str,
-    app_version: &'a str,
-    #[serde(serialize_with = "serialize_client_id")]
-    cid: &'a ApiClientId,
-    sec: &'a str,
-    device_id: &'a str,
-    hibp_check: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    app_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    app_version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cid: Option<&'a ApiClientId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sec: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hibp_check: Option<bool>,
     #[serde(rename = "p-ticket", skip_serializing_if = "Option::is_none")]
     penalty_ticket: Option<&'a str>,
 }
@@ -35,20 +40,22 @@ impl<'a> AccessTokenRequest<'a> {
             app_version: credentials.app_version(),
             cid: credentials.client_id(),
             sec: credentials.secret(),
-            device_id: credentials.device_id().as_str(),
+            device_id: credentials.device_id().map(DeviceId::as_str),
             hibp_check: credentials.hibp_check(),
             penalty_ticket,
         }
     }
 }
 
-fn serialize_client_id<S>(value: &ApiClientId, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    match value {
-        ApiClientId::Numeric(value) => serializer.serialize_u64(*value),
-        ApiClientId::Text(value) => serializer.serialize_str(value),
+impl Serialize for ApiClientId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Numeric(value) => serializer.serialize_u64(*value),
+            Self::Text(value) => serializer.serialize_str(value),
+        }
     }
 }
 

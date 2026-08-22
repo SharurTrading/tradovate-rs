@@ -38,6 +38,7 @@ fn credentials_for(name: &str) -> Credentials {
         .app_version("1.0")
         .numeric_client_id(123)
         .secret("synthetic-secret")
+        .hibp_check(true)
         .device_id(
             DeviceId::new("synthetic-device")
                 .unwrap_or_else(|error| panic!("fixture device ID must be valid: {error}")),
@@ -76,6 +77,37 @@ async fn authenticated_client(server: &MockServer) -> Client {
         .unwrap_or_else(|error| panic!("fixture authentication must succeed: {error}"));
     login.assert_async().await;
     client
+}
+
+#[tokio::test]
+async fn minimal_credentials_omit_every_optional_wire_field() {
+    let server = MockServer::start_async().await;
+    let login = server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/v1/auth/accesstokenrequest")
+                .json_body(json!({
+                    "name": "minimal-user",
+                    "password": "minimal-password"
+                }));
+            then.status(200).json_body(json!({
+                "accessToken": "synthetic-access-token",
+                "expirationTime": "2035-08-21T01:30:00Z",
+                "userId": 7
+            }));
+        })
+        .await;
+    let credentials = Credentials::builder("minimal-user", "minimal-password")
+        .build()
+        .unwrap_or_else(|error| panic!("minimal credentials must validate: {error}"));
+    let client = fixture_client(&server);
+
+    client
+        .authenticate(&credentials)
+        .await
+        .unwrap_or_else(|error| panic!("minimal authentication must succeed: {error}"));
+
+    login.assert_async().await;
 }
 
 fn limit_order() -> PlaceOrder {

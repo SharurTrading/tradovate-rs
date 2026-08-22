@@ -34,7 +34,8 @@ python3 tools/generate_openapi.py --check
 cargo fmt --all -- --check
 bash scripts/ci/check_file_sizes.sh
 cargo check --no-default-features --locked
-cargo clippy --all-targets --all-features --locked -- -D warnings -D clippy::pedantic -D clippy::await_holding_lock -D clippy::expect_used -D clippy::unwrap_used
+cargo check --all-targets --all-features --locked
+cargo clippy --all-targets --all-features --locked -- -D warnings -D clippy::all -D clippy::pedantic -D clippy::await_holding_lock -D clippy::expect_used -D clippy::unwrap_used -F unsafe-code
 RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --locked
 cargo nextest run --all-features --locked --no-fail-fast
 cargo test --doc --all-features --locked
