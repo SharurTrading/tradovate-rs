@@ -148,8 +148,8 @@ fn websocket_config(max_frame_bytes: usize) -> WebSocketConfig {
         .read_buffer_size(read_buffer_size)
         .write_buffer_size(write_buffer_size)
         .max_write_buffer_size(max_write_buffer_size)
-        .max_message_size(Some(max_frame_bytes))
-        .max_frame_size(Some(max_frame_bytes))
+        .max_message_size((max_frame_bytes != usize::MAX).then_some(max_frame_bytes))
+        .max_frame_size((max_frame_bytes != usize::MAX).then_some(max_frame_bytes))
 }
 
 pub(super) const fn cancelled(connection_id: ConnectionId) -> RealtimeError {

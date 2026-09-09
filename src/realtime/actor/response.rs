@@ -13,7 +13,6 @@ use crate::{
 
 pub(super) enum Disposition {
     Complete(Result<Response, RealtimeError>),
-    Terminate(RealtimeError),
 }
 
 pub(super) fn classify(
@@ -39,10 +38,10 @@ pub(super) fn classify(
     match provider_control::inspect(response.data()) {
         Ok(ResponseControl::Payload) => Disposition::Complete(Ok(response)),
         Ok(ResponseControl::BusinessFailure { violation_count }) => {
-            Disposition::Terminate(RealtimeError::ProviderBusinessFailure {
+            Disposition::Complete(Err(RealtimeError::ProviderBusinessFailure {
                 request_id,
                 violation_count,
-            })
+            }))
         }
         Ok(ResponseControl::Penalty(penalty)) => {
             let (ticket, retry_after, captcha_required) = penalty.into_parts();
@@ -52,12 +51,12 @@ pub(super) fn classify(
             } else {
                 rate_limits.apply_endpoint_cooldown(endpoint, retry_after);
             }
-            Disposition::Terminate(RealtimeError::ProviderPenalty {
+            Disposition::Complete(Err(RealtimeError::ProviderPenalty {
                 request_id,
                 retry_after,
                 captcha_required,
-            })
+            }))
         }
-        Err(_) => Disposition::Terminate(RealtimeError::Protocol),
+        Err(_) => Disposition::Complete(Err(RealtimeError::Protocol)),
     }
 }

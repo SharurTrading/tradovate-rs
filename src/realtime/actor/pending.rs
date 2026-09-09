@@ -3,7 +3,10 @@
 
 //! Bounded request correlation and deadline ownership.
 
-use std::{collections::HashMap, future};
+use std::{
+    collections::{BTreeSet, HashMap},
+    future,
+};
 
 use tokio::{sync::oneshot, time::Instant};
 
@@ -25,7 +28,7 @@ pub(super) enum PendingReply {
 
 pub(super) struct PendingRequests {
     entries: HashMap<RequestId, Pending>,
-    next_request_id: u64,
+    deadlines: BTreeSet<(Instant, RequestId)>,
 }
 
 pub(super) async fn wait_for_deadline(deadline: Option<Instant>) {
@@ -36,24 +39,27 @@ pub(super) async fn wait_for_deadline(deadline: Option<Instant>) {
 }
 
 impl PendingRequests {
-    pub(super) fn with_capacity(capacity: usize, next_request_id: u64) -> Self {
+    pub(super) fn with_capacity(capacity: usize) -> Self {
         Self {
-            entries: HashMap::with_capacity(capacity),
-            next_request_id,
+            entries: HashMap::with_capacity(capacity.min(1_024)),
+            deadlines: BTreeSet::new(),
         }
+    }
+
+    pub(super) fn reap_cancelled(&mut self) {
+        let deadlines = &mut self.deadlines;
+        self.entries.retain(|id, pending| {
+            if pending.reply.is_closed() {
+                deadlines.remove(&(pending.deadline, *id));
+                false
+            } else {
+                true
+            }
+        });
     }
 
     pub(super) fn len(&self) -> usize {
         self.entries.len()
-    }
-
-    pub(super) fn allocate_request_id(&mut self) -> Result<RequestId, RealtimeError> {
-        let request_id = RequestId::new(self.next_request_id);
-        self.next_request_id = self
-            .next_request_id
-            .checked_add(1)
-            .ok_or(RealtimeError::RequestIdExhausted)?;
-        Ok(request_id)
     }
 
     pub(super) fn insert(
@@ -63,6 +69,7 @@ impl PendingRequests {
         deadline: Instant,
         reply: oneshot::Sender<Result<Response, RealtimeError>>,
     ) {
+        self.deadlines.insert((deadline, request_id));
         self.entries.insert(
             request_id,
             Pending {
@@ -79,6 +86,7 @@ impl PendingRequests {
         observed_at: Instant,
     ) -> Option<PendingReply> {
         self.entries.remove(&request_id).map(|pending| {
+            self.deadlines.remove(&(pending.deadline, request_id));
             if pending.deadline <= observed_at {
                 PendingReply::Expired(pending.reply)
             } else {
@@ -91,30 +99,28 @@ impl PendingRequests {
     }
 
     pub(super) fn next_deadline(&self) -> Option<Instant> {
-        self.entries.values().map(|pending| pending.deadline).min()
+        self.deadlines.first().map(|(deadline, _)| *deadline)
     }
 
-    pub(super) fn expire(&mut self) -> Option<RequestId> {
+    pub(super) fn expire(&mut self) {
         let now = Instant::now();
-        let expired = self
-            .entries
-            .iter()
-            .filter_map(|(request_id, pending)| (pending.deadline <= now).then_some(*request_id))
-            .collect::<Vec<_>>();
-        let first = expired.first().copied();
-        for request_id in expired {
+        while let Some(&(deadline, request_id)) = self.deadlines.first() {
+            if deadline > now {
+                break;
+            }
+            self.deadlines.pop_first();
             if let Some(pending) = self.entries.remove(&request_id) {
                 drop(
                     pending
                         .reply
-                        .send(Err(RealtimeError::RequestTimeout { request_id })),
+                        .send(Err(RealtimeError::RequestOutcomeUncertain { request_id })),
                 );
             }
         }
-        first
     }
 
     pub(super) fn drain_uncertain(&mut self) {
+        self.deadlines.clear();
         for (request_id, pending) in self.entries.drain() {
             drop(
                 pending
@@ -133,7 +139,7 @@ mod tests {
 
     #[test]
     fn response_observed_at_deadline_is_expired() {
-        let mut pending = PendingRequests::with_capacity(1, 2);
+        let mut pending = PendingRequests::with_capacity(1);
         let request_id = RequestId::new(2);
         let deadline = Instant::now();
         let (reply, _response) = oneshot::channel();
@@ -147,7 +153,7 @@ mod tests {
 
     #[test]
     fn response_observed_before_deadline_is_active() {
-        let mut pending = PendingRequests::with_capacity(1, 2);
+        let mut pending = PendingRequests::with_capacity(1);
         let request_id = RequestId::new(2);
         let observed_at = Instant::now();
         let deadline = observed_at + Duration::from_secs(1);

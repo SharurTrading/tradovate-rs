@@ -153,6 +153,12 @@ pub enum RealtimeError {
     /// The spawned actor panicked or was externally aborted.
     #[error("real-time actor task failed")]
     ActorTaskFailed,
+    /// The captured socket is no longer accepting work. Nothing was enqueued.
+    #[error("real-time generation {connection_id} is no longer active")]
+    StaleGeneration {
+        /// The immutable socket identity captured before dispatch.
+        connection_id: ConnectionId,
+    },
     /// The configured pending-request ceiling was reached.
     #[error("pending real-time request limit {limit} reached")]
     PendingLimitReached {
@@ -170,7 +176,8 @@ pub enum RealtimeError {
         /// Connected service.
         actual: SocketKind,
     },
-    /// A request expired and was removed from correlation state.
+    /// A queued request expired before transmission. An admitted timeout instead
+    /// returns `RequestOutcomeUncertain`.
     #[error("real-time request {request_id} timed out")]
     RequestTimeout {
         /// Expired request identifier.
@@ -216,7 +223,7 @@ pub enum RealtimeError {
         /// Request requiring provider-state reconciliation.
         request_id: RequestId,
     },
-    /// No inbound traffic arrived before the liveness deadline.
+    /// A transmitted active WebSocket probe received no matching pong in time.
     #[error("real-time socket liveness timed out")]
     LivenessTimeout,
     /// The server closed the logical or physical connection.
@@ -269,6 +276,7 @@ impl RealtimeError {
             | Self::InvalidRequest { .. }
             | Self::InvalidTypedResponse { .. }
             | Self::LocalRateLimit { .. }
+            | Self::StaleGeneration { .. }
             | Self::PendingLimitReached { .. }
             | Self::RequestQueueTimeout
             | Self::WrongSocketKind { .. }

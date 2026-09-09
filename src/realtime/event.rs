@@ -142,6 +142,11 @@ impl UnmatchedResponse {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum RealtimeEventPayload {
+    /// Accepted events precede this retained marker. Install a recovery boundary
+    /// and acknowledge it to resume data on the same socket.
+    ContinuityGap(super::ContinuityGap),
+    /// Both socket producers have stopped. The exact terminal error is retained.
+    GenerationEnded(Result<(), super::RealtimeError>),
     /// Initial user state or a provider entity delta.
     User(UserStreamEvent),
     /// Quotes, depth, or histogram updates.
@@ -179,7 +184,9 @@ impl RealtimeEventPayload {
                     super::user_stream::UserEntityBatch::Unsupported { .. }
                 )
             }),
-            Self::MarketData(_)
+            Self::ContinuityGap(_)
+            | Self::GenerationEnded(_)
+            | Self::MarketData(_)
             | Self::Chart(_)
             | Self::Shutdown(_)
             | Self::UnmatchedResponse(_) => false,

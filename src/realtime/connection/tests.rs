@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT-0
 
 use super::*;
+use crate::realtime::session::reserve_command_slot;
+use tokio::time::Instant;
 
 struct DropProbe(Option<oneshot::Sender<()>>);
 
@@ -16,6 +18,9 @@ impl Drop for DropProbe {
 fn command() -> Command {
     let (reply, _response) = oneshot::channel();
     Command::Request {
+        connection_id: ConnectionId::new(99),
+        request_id: super::super::RequestId::new(2),
+        invocation: super::super::admission::Invocation::new(),
         endpoint: "fixture",
         query: String::new(),
         body: String::new(),
@@ -43,19 +48,23 @@ async fn full_command_queue_honors_the_pre_send_deadline() {
 }
 
 #[tokio::test]
-async fn dropping_connection_aborts_its_actor_task() {
+async fn dropping_connection_cancels_and_tracks_its_actor_task() {
     let (probe_dropped, dropped) = oneshot::channel();
     let (started, actor_started) = oneshot::channel();
-    let actor = tokio::spawn(async move {
+    let tasks = TaskTracker::new();
+    let cancellation = CancellationToken::new();
+    let cancelled = cancellation.clone();
+    let actor = tasks.spawn(async move {
         let _probe = DropProbe(Some(probe_dropped));
         let _send_result = started.send(());
-        std::future::pending::<Result<(), RealtimeError>>().await
+        cancelled.cancelled().await;
+        Ok::<(), RealtimeError>(())
     });
     assert!(actor_started.await.is_ok());
 
     let connection_id = ConnectionId::new(99);
     let (commands, _command_receiver) = mpsc::channel(1);
-    let (_event_sender, events) = mpsc::channel(1);
+    let events = Arc::new(super::super::delivery::Delivery::new(connection_id, 1));
     let (_state_sender, state) = watch::channel(RealtimeState::Ready { connection_id });
     let codec = FrameCodec::new(128, 8);
     let Ok(codec) = codec else {
@@ -67,14 +76,18 @@ async fn dropping_connection_aborts_its_actor_task() {
         commands,
         events,
         state,
-        cancellation: CancellationToken::new(),
-        request_abandoned: CancellationToken::new(),
-        actor: Some(actor),
+        cancellation,
+        request_abandoned: Arc::new(tokio::sync::Notify::new()),
+        tasks: tasks.clone(),
+        admission: Arc::new(super::super::admission::Admission::new()),
         request_timeout: Duration::from_secs(1),
         codec,
     };
 
+    tasks.close();
     drop(connection);
+    tasks.wait().await;
+    assert!(actor.await.is_ok());
 
     assert!(
         tokio::time::timeout(Duration::from_secs(1), dropped)

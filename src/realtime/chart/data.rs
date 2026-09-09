@@ -14,11 +14,20 @@ macro_rules! chart_id {
     ($name:ident, $doc:literal) => {
         #[doc = $doc]
         #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        pub struct $name(ChartSubscriptionId);
+        pub struct $name(ChartSubscriptionId, crate::realtime::ConnectionId);
 
         impl $name {
-            pub(super) fn from_wire(value: i64) -> Result<Self, RealtimeError> {
-                ChartSubscriptionId::from_wire(value).map(Self)
+            pub(super) fn from_wire(
+                value: i64,
+                connection_id: crate::realtime::ConnectionId,
+            ) -> Result<Self, RealtimeError> {
+                ChartSubscriptionId::from_wire(value).map(|id| Self(id, connection_id))
+            }
+
+            /// Returns the socket which allocated this identifier.
+            #[must_use]
+            pub const fn connection_id(self) -> crate::realtime::ConnectionId {
+                self.1
             }
 
             /// Returns the provider integer.

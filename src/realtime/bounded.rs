@@ -3,12 +3,34 @@
 
 //! Private bounded Serde containers for untrusted realtime payloads.
 
-use std::{collections::BTreeMap, fmt, marker::PhantomData};
+use std::{cell::Cell, collections::BTreeMap, fmt, marker::PhantomData};
 
 use serde::{
     Deserialize,
     de::{DeserializeOwned, Error as _, IgnoredAny, MapAccess, SeqAccess, Visitor},
 };
+
+// Serde derives do not carry decoder context. Scope the caller's validated
+// bound to one synchronous decode only; this function never awaits or spawns.
+// The RAII reset also restores nested contexts and unwinding on the same thread.
+thread_local! {
+    static COLLECTION_LIMIT: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+pub(super) fn with_limit<T>(limit: usize, decode: impl FnOnce() -> T) -> T {
+    struct Reset(Option<usize>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            COLLECTION_LIMIT.set(self.0);
+        }
+    }
+    let _reset = Reset(COLLECTION_LIMIT.replace(Some(limit)));
+    decode()
+}
+
+fn collection_limit(default: usize) -> usize {
+    COLLECTION_LIMIT.get().unwrap_or(default)
+}
 
 const LIMIT_ERROR_MARKER: &str = "tradovate realtime collection limit exceeded";
 
@@ -135,9 +157,10 @@ where
     where
         A: SeqAccess<'de>,
     {
-        let capacity = sequence.size_hint().unwrap_or(0).min(LIMIT);
+        let limit = collection_limit(LIMIT);
+        let capacity = sequence.size_hint().unwrap_or(0).min(limit);
         let mut values = Vec::with_capacity(capacity);
-        while values.len() < LIMIT {
+        while values.len() < limit {
             let Some(value) = sequence.next_element::<T>()? else {
                 return Ok(BoundedVec(values));
             };
@@ -205,7 +228,8 @@ where
     {
         let mut values = BTreeMap::new();
         let mut count = 0_usize;
-        while count < LIMIT {
+        let limit = collection_limit(LIMIT);
+        while count < limit {
             let Some((key, value)) = entries.next_entry::<K, V>()? else {
                 return Ok(BoundedMap(values));
             };
@@ -283,5 +307,26 @@ mod tests {
             count_one_or_many::<2>("[{},0]"),
             Err(DecodeError::Malformed)
         ));
+    }
+}
+
+#[cfg(test)]
+mod configured_tests {
+    use super::*;
+
+    #[test]
+    fn configured_collection_bounds_can_be_raised_and_are_scoped() {
+        let decode = || from_str::<BoundedVec<u8, 2>>("[0,1,2]");
+        assert!(decode().is_err());
+        assert!(with_limit(3, decode).is_ok());
+        assert!(decode().is_err(), "override leaked into another decoder");
+        assert!(with_limit(1, decode).is_err());
+        assert!(
+            with_limit(3, || {
+                assert!(with_limit(1, decode).is_err());
+                decode()
+            })
+            .is_ok()
+        );
     }
 }
