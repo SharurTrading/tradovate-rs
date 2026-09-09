@@ -35,6 +35,9 @@ This project is pre-release. No release entries have been published.
 
 ### Dependency and CI maintenance
 
+- Drive the unanswered-ping burst regression with an explicit test clock so real
+  TCP delivery delays cannot race its liveness deadline. Preserve repeated-batch
+  coverage and the original `LivenessTimeout` assertion; production timing is unchanged.
 - Update `rust_decimal` from 1.42.1 to 1.43.0, retaining `std`-only features
   and the exact-decimal wire contract ([#10](https://github.com/SharurTrading/tradovate-rs/pull/10)).
 - Retire the inactive `RUSTSEC-2026-0235` exception and its feature-graph guard:
