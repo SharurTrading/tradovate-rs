@@ -3,7 +3,9 @@
 
 //! Encoding and decoding for Tradovate's SockJS-derived WebSocket framing.
 
+mod batch;
 mod decode;
+pub(crate) use batch::RecordBatch;
 
 use std::fmt;
 

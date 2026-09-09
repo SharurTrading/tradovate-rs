@@ -120,7 +120,7 @@ async fn websocket_429_uses_the_official_one_hour_cooldown() {
 }
 
 #[tokio::test]
-async fn correlated_business_control_terminates_the_generation() {
+async fn correlated_business_control_preserves_the_generation() {
     let (listener, url) = bind().await;
     let server = tokio::spawn(async move {
         let mut socket = accept(listener).await;
@@ -131,6 +131,7 @@ async fn correlated_business_control_terminates_the_generation() {
             r#"a[{"i":2,"s":200,"d":{"errorText":"synthetic rejection"}}]"#,
         )
         .await;
+        expect_close(&mut socket).await;
     });
     let client = authenticated_client(&url, "access", Some("market-data"));
     let connection = connect(&client, SocketKind::MarketData, RealtimeConfig::default()).await;
@@ -142,10 +143,8 @@ async fn correlated_business_control_terminates_the_generation() {
             .await,
         Err(RealtimeError::ProviderBusinessFailure { .. })
     ));
-    assert!(matches!(
-        connection.shutdown().await,
-        Err(RealtimeError::ProviderBusinessFailure { .. })
-    ));
+    assert!(matches!(connection.state(), RealtimeState::Ready { .. }));
+    assert!(connection.shutdown().await.is_ok());
     join(server).await;
 }
 

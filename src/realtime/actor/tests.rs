@@ -9,11 +9,13 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::*;
 use crate::realtime::{
-    DocumentationBlockedCapability, RealtimeEventPayload, RequestId, SocketKind, UserStreamEvent,
+    DocumentationBlockedCapability, RealtimeEvent, RealtimeEventPayload, RequestId, SocketKind,
+    UserStreamEvent,
 };
 
 mod authentication;
 mod cancellation;
+mod continuity;
 mod market_data;
 mod support;
 mod user_sync;
@@ -110,7 +112,7 @@ async fn authorization_stages_event_only_and_co_batched_frames_in_order() {
 }
 
 #[tokio::test]
-async fn event_overflow_terminates_with_resync_required() {
+async fn event_overflow_retains_a_gap_before_transport_termination() {
     let (listener, url) = bind().await;
     let server = tokio::spawn(async move {
         let mut socket = accept(listener).await;
@@ -127,28 +129,31 @@ async fn event_overflow_terminates_with_resync_required() {
         .request_timeout(Duration::from_secs(1));
     let mut connection = connect(&client, SocketKind::User, config).await;
 
-    let state = await_terminal_state(&mut connection).await;
-    assert!(matches!(
-        state,
-        RealtimeState::ResyncRequired {
-            reason: ResyncReason::EventBufferOverflow,
-            ..
-        }
-    ));
     assert!(connection.recv_event().await.is_some());
+    assert!(
+        matches!(connection.recv_event().await.map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::ContinuityGap(gap))
+            if gap.reason() == ResyncReason::EventBufferOverflow)
+    );
+    assert!(matches!(
+        connection
+            .recv_event()
+            .await
+            .map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::GenerationEnded(Err(
+            RealtimeError::Transport
+        )))
+    ));
     assert!(connection.recv_event().await.is_none());
     assert!(matches!(
         connection.shutdown().await,
-        Err(RealtimeError::ResyncRequired {
-            reason: ResyncReason::EventBufferOverflow,
-            ..
-        })
+        Err(RealtimeError::Transport)
     ));
     join(server).await;
 }
 
 #[tokio::test]
-async fn admitted_request_timeout_ends_the_generation() {
+async fn admitted_request_timeout_preserves_uncertainty() {
     let (listener, url) = bind().await;
     let server = tokio::spawn(async move {
         let mut socket = accept(listener).await;
@@ -167,15 +172,12 @@ async fn admitted_request_timeout_ends_the_generation() {
 
     assert!(matches!(
         connection.request_non_mutating("slow", "", "{}").await,
-        Err(RealtimeError::RequestTimeout {
+        Err(RealtimeError::RequestOutcomeUncertain {
             request_id
         }) if request_id == RequestId::new(3)
     ));
-    assert!(matches!(
-        connection.shutdown().await,
-        Err(RealtimeError::RequestTimeout { request_id })
-            if request_id == RequestId::new(3)
-    ));
+    assert!(matches!(connection.state(), RealtimeState::Ready { .. }));
+    assert!(connection.shutdown().await.is_ok());
     join(server).await;
 }
 
@@ -242,7 +244,7 @@ async fn heartbeat_runs_without_application_traffic() {
 }
 
 #[tokio::test]
-async fn documentation_blocked_replay_clock_invalidates_the_generation() {
+async fn documentation_blocked_replay_clock_retains_a_gap() {
     let (listener, url) = bind().await;
     let server = tokio::spawn(async move {
         let mut socket = accept(listener).await;
@@ -260,20 +262,23 @@ async fn documentation_blocked_replay_clock_invalidates_the_generation() {
         Some(RealtimeEventPayload::DocumentationBlocked(metadata))
             if metadata.capability() == DocumentationBlockedCapability::ReplayClockPayload
     ));
-    let state = await_terminal_state(&mut connection).await;
+    assert!(
+        matches!(connection.recv_event().await.map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::ContinuityGap(gap))
+            if gap.reason() == ResyncReason::UnsupportedEvent)
+    );
     assert!(matches!(
-        state,
-        RealtimeState::ResyncRequired {
-            reason: ResyncReason::UnsupportedEvent,
-            ..
-        }
+        connection
+            .recv_event()
+            .await
+            .map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::GenerationEnded(Err(
+            RealtimeError::Transport
+        )))
     ));
     assert!(matches!(
         connection.shutdown().await,
-        Err(RealtimeError::ResyncRequired {
-            reason: ResyncReason::UnsupportedEvent,
-            ..
-        })
+        Err(RealtimeError::Transport)
     ));
     join(server).await;
 }

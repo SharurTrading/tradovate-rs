@@ -25,7 +25,7 @@ exact regular-bar and compact-tick payloads.
 Raw JSON is private implementation detail. Public events contain typed current REST
 entities, exact `rust_decimal::Decimal` financial values, validated provider IDs, or
 bounded structural metadata. A malformed, oversized, unsupported, or abandoned
-event/request cannot silently become caller truth: it fails the generation or publishes
+event/request cannot silently become caller truth: it retains an explicit gap or publishes
 an explicit resynchronization requirement.
 
 Two current documentation boundaries remain:
@@ -44,11 +44,11 @@ wire shapes or expose their raw payloads.
 | Current Partner capability | State | Public contract |
 | --- | --- | --- |
 | User, market-data, and replay socket endpoints | Implemented | `SocketKind` plus `Client::connect_realtime` select one validated service endpoint and create one immutable `ConnectionId` generation. |
-| SockJS-derived `o`, `a[...]`, `h`, and logical-close framing | Implemented | Bounded private codec; malformed, binary, oversized, or invalid-state frames fail closed. |
+| SockJS-derived `o`, `a[...]`, `h`, and logical-close framing | Implemented | Configurable transport framing bounds and incremental active-record decoding; malformed application records retain a gap without hiding later valid records. |
 | Authorization | Implemented | Access-token authorization for user/replay and market-data token with access-token fallback for MD; token freshness is rechecked before send and errors are secret-safe. |
-| Client heartbeat and inbound liveness | Implemented | Independent monotonic `[]` heartbeat every 2.5 seconds, ping/pong support, bounded liveness timeout, and generation failure when writer backpressure would miss the heartbeat. |
+| Client heartbeat and inbound liveness | Implemented | Independent `[]` heartbeat every 2.5 seconds; silence starts a correlated active ping/pong check. Write and request deadlines are separate. |
 | Correlated responses | Implemented | Bounded request IDs and pending map; late responses become typed `UnmatchedResponse` metadata with response bodies discarded. |
-| Generation lifecycle and recovery | Implemented | `Connecting`, `Ready`, `Closed`, and `ResyncRequired` state with explicit overflow, loss, abandonment, heartbeat, and unsupported-event reasons. |
+| Generation lifecycle and recovery | Implemented | Latest-state views plus ordered, retained `ContinuityGap` and `GenerationEnded` events; exact-marker recovery acknowledgement and generation-bound operational handles. |
 | User bootstrap | Implemented | `UserSyncConfig` always uses `splitResponses: false`, explicitly requests all 31 pinned current entity families by default, supports the documented safe filter/sharding fields, and requires `users` plus `contractGroups` before co-batched deltas and readiness. |
 | User `props` deltas | Implemented | Typed `Created`, `Updated`, and `Deleted` events; all 31 current sync entity families plus the documented `OtherEnvAdminAlertSignal` wrapper decode to typed current REST entities. |
 | B2B split-response bootstrap | Documentation blocked | No current completion marker or multipart assembly contract is published; `B2bSplitUserSync` records the withheld capability. |
@@ -63,7 +63,7 @@ wire shapes or expose their raw payloads.
 | Replay common socket lifecycle | Implemented | Current replay endpoint selection, authorization, framing, generation, typed common events, and recovery semantics. |
 | Replay `clock` payload | Documentation blocked | The raw body is discarded and a `ReplayClockPayload` metadata event forces resynchronization. |
 | Replay startup/control | Documentation blocked | No public control method is exposed; `ReplayControl` records the missing current request contract. |
-| Unknown current extensions | Implemented fail-closed boundary | Bounded `ProviderCode`/item-count metadata is observable, raw data is discarded, and the generation requires resynchronization. |
+| Unknown current extensions | Implemented fail-closed boundary | Bounded `ProviderCode`/item-count metadata is observable, raw data is discarded, and data delivery requires acknowledged resynchronization while the socket remains active. |
 
 The complete typed REST operation surface remains available through the REST client.
 The generic WebSocket request primitive is intentionally private: public realtime
@@ -79,17 +79,17 @@ and makes teardown observable.
 Each successful attempt receives a process-local `ConnectionId`. Events carry that ID,
 and the handle never replaces its socket with a new generation. It does not retain a
 canonical desired-subscription set, account projection, order mirror, or replay
-session. After an unexpected gap, callers:
+session. After a `ContinuityGap`, install snapshot/reconciliation recovery and call
+`acknowledge_continuity_gap` with the exact received marker. The accepted event prefix
+precedes the gap, and stale markers or buffered records cannot reopen an old boundary.
+Replies and keepalives remain available throughout. Unknown subscription outcomes
+remain caller-owned; timeout/cancellation does not prove unsubscribe/reset success.
 
-1. stop accepting events from the failed generation;
-2. reconcile or obtain a fresh authoritative snapshot;
-3. create a new authorized generation;
-4. replay their own idempotent desired subscriptions; and
-5. accept deltas only after their application-level recovery fence is complete.
-
-Only caller-requested shutdown is an ordinary `Closed` state. Event overflow,
-connection loss, an abandoned admitted request, a missed heartbeat deadline, or an
-event whose semantics cannot be preserved becomes `ResyncRequired`.
+After actual transport loss, the ordered tail retains `GenerationEnded` with the exact
+error. Both socket halves have stopped before that evidence. `RealtimeSession::wait_ended`
+additionally waits for tracked task completion. The caller may establish a replacement,
+then replay subscriptions and recover projections. There is no automatic reconnect loop.
+Capture a session before dispatch; it cannot attach to a replacement or keep the owner alive.
 
 ## User stream contract
 
@@ -184,10 +184,13 @@ synthetic staging fixture supplies the missing fields and completion semantics.
 
 ## Bounds and failure behavior
 
-`RealtimeConfig` defines positive hard limits for frame bytes, messages per frame,
-pending requests, command capacity, event capacity, request timeout, and inbound
-liveness. Configuration also validates worst-case aggregate byte budgets for command,
-event, and pending-response queues.
+`RealtimeConfig` validates independent positive frame, record, collection, queue,
+and pending-work capacities, plus request, socket-write, and active-probe timeouts.
+These are configurable client resource controls, not provider subscription quotas.
+The speculative aggregate byte budgets are removed. See the README capacity table;
+completed subscriptions have no total-count cap. Coalesced records yield individually
+on current-thread runtimes. Pending deadline lookup uses an ordered index rather than
+scanning every outstanding request on every event.
 
 The private codec validates endpoint/query newline rules, exact four-field requests,
 frame and message counts, correlated response structure, and text-only application

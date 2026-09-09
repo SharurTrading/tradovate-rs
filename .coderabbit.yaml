@@ -123,20 +123,24 @@ reviews:
       instructions: |
         Apply all twelve realtime lifecycle requirements in AGENTS.md. In
         particular: authenticate before readiness; recheck the token immediately
-        before authorization; use one generation for all tasks/events; fence every
-        write with the independent monotonic 2.5-second heartbeat deadline; issue
-        exactly one user/syncrequest; and tear down the whole generation on any
-        reader/writer/protocol/liveness/request-abandon failure (TV-AUTH-01,
+        before authorization; use one generation for all tasks/events; preserve
+        the independent monotonic 2.5-second heartbeat schedule; issue exactly one
+        user/syncrequest; and tear down the whole generation on actual transport
+        failure, remote closure, or a failed active ping/pong check (TV-AUTH-01,
         TV-TRANSPORT-01, TV-SYNC-01).
+        Request timeout/cancellation, application-record errors, queue pressure,
+        subscription refusal, and ordinary silence must preserve healthy sockets.
+        Accepted events precede retained continuity gaps; exact-marker recovery
+        resumes data on the same socket. Retain lifecycle evidence in order, and
+        publish generation-ended evidence only after producers actually stop.
         Bound during deserialization, before materializing attacker-controlled
-        overflow values. Pending requests, frame message counts, aggregate bytes,
-        command/event queues, and close waits all need named limits and fail-closed
-        overflow behavior (TV-PAT-BOUNDS-01). Realtime owns no canonical
+        overflow values. Pending requests, frame message counts, payload bytes,
+        command/event queues, and close waits need configurable named limits and
+        explicit saturation behavior (TV-PAT-BOUNDS-01). Realtime owns no canonical
         subscription, order, position, or account truth and does not auto-reconnect;
-        callers replace generations and replay canonical subscriptions after an
-        explicit recovery boundary (TV-SUBSCRIPTION-01, TV-ANTI-TRUTH-01).
-        Raw JSON remains private and unsupported semantics invalidate the generation
-        rather than publishing partial truth (TV-ANTI-RAW-01).
+        callers own replacement and recovery decisions (TV-SUBSCRIPTION-01,
+        TV-ANTI-TRUTH-01). Raw JSON remains private and unsupported semantics retain
+        a continuity gap without publishing partial truth (TV-ANTI-RAW-01).
 
     - path: "**/tests/**/*.rs"
       instructions: |

@@ -148,16 +148,26 @@ Split crates only when a real ownership, dependency, trust, or runtime boundary 
 5. Send Tradovate's `[]` client heartbeat from an independent monotonic 2.5-second
    schedule; incoming traffic does not replace the client heartbeat requirement.
 6. Issue exactly one user synchronization request for an authenticated user-socket generation; a penalty ends setup without an automatic retry.
-7. On reader, writer, protocol, or liveness failure, end the entire generation.
+7. On actual reader/writer failure, remote closure, or a failed active WebSocket
+   ping/pong check, end the generation. Ordinary silence, application-record errors,
+   queue pressure, and subscription refusals do not end healthy sockets.
 8. Correlate provider replies with bounded pending requests and reclaim slots on every exit.
-9. If a request may have been admitted but its completion is lost, end the generation.
-10. On event overflow, stop publication, report a transport gap, and terminate that
-   generation. A caller starts a fresh generation only after installing its recovery
-   boundary; a damaged generation cannot be acknowledged back into service.
+9. If a request may have been admitted but its completion is lost, retain an unknown
+   outcome without resending or reusing its identity. Cancel only its wait; preserve
+   the socket and unrelated operations.
+10. On event overflow or malformed application records, fence data publication and
+   retain a nonterminal continuity gap after the accepted event prefix. Keep replies
+   and keepalives running. Resume only after the consumer installs its recovery
+   boundary and acknowledges the exact delivered marker; stale buffered records
+   must not cross that boundary. Retain terminal evidence after the ordered gap.
 11. The library does not automatically reconnect. A caller-created replacement uses a
    fresh token snapshot, and the caller replays its canonical subscriptions; transport
    retains neither subscriptions nor a replay queue.
-12. Dropping the last caller-owned handle cancels and tears down every library task.
+12. Dropping the last caller-owned handle cancels every library task, including
+   outside an ambient Tokio context. Track actual termination; dropping a join
+   handle is not proof of termination. Operational handles retain immutable
+   generation identity without lifecycle authority; reject stale admission before
+   enqueueing. Publish generation-ended evidence only after socket producers stop.
 
 ## Banned antipatterns
 

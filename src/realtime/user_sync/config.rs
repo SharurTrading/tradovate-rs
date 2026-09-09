@@ -11,8 +11,6 @@ use serde::Serialize;
 use super::{UserSyncEntityType, UserSyncSharding};
 use crate::{AccountId, UserId, realtime::RealtimeError};
 
-const MAX_FILTER_IDS: usize = 4_096;
-
 /// A validated unsplit current user-synchronization request.
 ///
 /// The default explicitly subscribes to every entity family in the pinned
@@ -56,7 +54,7 @@ impl UserSyncConfig {
     /// # Errors
     ///
     /// Returns [`RealtimeError::InvalidConfiguration`] for an empty,
-    /// duplicate, or oversized user list.
+    /// or duplicate user list. The connection validates the encoded frame size.
     pub fn for_users(users: Vec<UserId>) -> Result<Self, RealtimeError> {
         validate_ids(&users, "user_sync.users")?;
         Ok(Self {
@@ -74,7 +72,8 @@ impl UserSyncConfig {
     /// # Errors
     ///
     /// Returns [`RealtimeError::InvalidConfiguration`] for an empty,
-    /// duplicate, or oversized list, or when socket sharding is configured.
+    /// duplicate list, or when socket sharding is configured. The connection
+    /// validates the encoded frame size.
     pub fn accounts(mut self, accounts: Vec<AccountId>) -> Result<Self, RealtimeError> {
         if self.sharding.is_some() {
             return Err(conflict(
@@ -247,9 +246,6 @@ where
 {
     if values.is_empty() {
         return Err(conflict(field, "must contain at least one ID"));
-    }
-    if values.len() > MAX_FILTER_IDS {
-        return Err(conflict(field, "exceeds the 4096-ID safety maximum"));
     }
     let unique = values.iter().copied().collect::<BTreeSet<_>>();
     if unique.len() != values.len() {

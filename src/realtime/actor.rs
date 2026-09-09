@@ -6,8 +6,11 @@
 mod handshake;
 mod lifecycle;
 mod pending;
+mod receive;
 mod response;
+mod task;
 mod writer;
+pub(super) use task::tracked;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::{
@@ -19,13 +22,12 @@ use tokio_util::sync::CancellationToken;
 
 use self::handshake::{AuthorizationFence, EstablishInput, SocketReader, SocketWriter};
 use self::lifecycle::{
-    normalize_shutdown, publish_active_terminal, publish_event, publish_setup_failure,
-    publish_shutdown,
+    normalize_shutdown, publish_active_terminal, publish_setup_failure, publish_shutdown,
 };
 use self::pending::{PendingReply, PendingRequests, wait_for_deadline};
 use super::{
-    ConnectionId, FrameCodec, RealtimeConfig, RealtimeError, RealtimeEvent, RealtimeState,
-    Response, ResyncReason, ServerFrame, ServerMessage, event::decode,
+    ConnectionId, FrameCodec, RealtimeConfig, RealtimeError, RealtimeState, Response, ResyncReason,
+    ServerMessage, event::decode,
 };
 use crate::{
     auth::{TokenSnapshot, TokenStore},
@@ -40,23 +42,38 @@ pub(super) struct ActorInput {
     pub(super) tokens: std::sync::Arc<TokenStore>,
     pub(super) config: RealtimeConfig,
     pub(super) user_sync: crate::realtime::UserSyncConfig,
+    pub(super) admission: std::sync::Arc<super::admission::Admission>,
     pub(super) commands: mpsc::Receiver<Command>,
-    pub(super) events: mpsc::Sender<RealtimeEvent>,
+    pub(super) events: std::sync::Arc<super::delivery::Delivery>,
     pub(super) state: watch::Sender<RealtimeState>,
     pub(super) ready: oneshot::Sender<Result<(), RealtimeError>>,
     pub(super) cancellation: CancellationToken,
-    pub(super) request_abandoned: CancellationToken,
+    pub(super) request_abandoned: std::sync::Arc<tokio::sync::Notify>,
     pub(super) rate_limits: std::sync::Arc<RateGovernor>,
 }
 
 pub(super) enum Command {
     Request {
+        connection_id: ConnectionId,
+        request_id: super::RequestId,
+        invocation: super::admission::Invocation,
         endpoint: &'static str,
         query: String,
         body: String,
         deadline: Instant,
         reply: oneshot::Sender<Result<Response, RealtimeError>>,
     },
+}
+
+enum Wake {
+    Shutdown,
+    Abandoned,
+    Deadline,
+    Probe,
+    Heartbeat,
+    Record,
+    Command(Option<Command>),
+    Socket(Option<Result<Message, tokio_tungstenite::tungstenite::Error>>),
 }
 
 struct Actor {
@@ -66,13 +83,16 @@ struct Actor {
     writer: SocketWriter,
     reader: SocketReader,
     commands: mpsc::Receiver<Command>,
-    events: mpsc::Sender<RealtimeEvent>,
+    events: std::sync::Arc<super::delivery::Delivery>,
     cancellation: CancellationToken,
-    request_abandoned: CancellationToken,
+    request_abandoned: std::sync::Arc<tokio::sync::Notify>,
     pending: PendingRequests,
     last_received: Instant,
+    probe: Option<receive::ActiveProbe>,
+    next_probe: u64,
+    batch: Option<super::codec::RecordBatch>,
+    batch_epoch: Option<u64>,
     heartbeat: time::Interval,
-    heartbeat_deadline: Instant,
     rate_limits: std::sync::Arc<RateGovernor>,
 }
 
@@ -92,6 +112,7 @@ pub(super) async fn run(input: ActorInput) -> Result<(), RealtimeError> {
         cancellation,
         request_abandoned,
         rate_limits,
+        admission,
     } = input;
     let established = handshake::establish(EstablishInput {
         connection_id,
@@ -118,7 +139,6 @@ pub(super) async fn run(input: ActorInput) -> Result<(), RealtimeError> {
         config.frame_bytes_limit(),
         config.messages_per_frame_limit(),
     )?;
-    let heartbeat_deadline = established.heartbeat_deadline;
     let heartbeat = established.heartbeat;
     let mut actor = Actor {
         connection_id,
@@ -130,13 +150,13 @@ pub(super) async fn run(input: ActorInput) -> Result<(), RealtimeError> {
         events,
         cancellation,
         request_abandoned,
-        pending: PendingRequests::with_capacity(
-            config.pending_requests_limit(),
-            established.next_request_id,
-        ),
+        pending: PendingRequests::with_capacity(config.pending_requests_limit()),
         last_received: Instant::now(),
+        probe: None,
+        next_probe: 0,
+        batch: None,
+        batch_epoch: Some(1),
         heartbeat,
-        heartbeat_deadline,
         rate_limits,
     };
     if let Err(error) = actor.publish_established(established.bootstrap, established.staged) {
@@ -144,13 +164,20 @@ pub(super) async fn run(input: ActorInput) -> Result<(), RealtimeError> {
         let _ready_result = ready.send(Err(error));
         return Err(error);
     }
+    admission.activate(established.next_request_id);
     let _previous_state = state.send_replace(RealtimeState::Ready { connection_id });
     if ready.send(Ok(())).is_err() {
+        drop(actor);
         publish_shutdown(&state, connection_id);
         return Ok(());
     }
     let result = normalize_shutdown(actor.event_loop().await);
     actor.pending.drain_uncertain();
+    admission.end();
+    actor.cancellation.cancel();
+    let delivery = std::sync::Arc::clone(&actor.events);
+    drop(actor); // Both socket halves and every pending producer stop before this evidence.
+    delivery.end(result);
     publish_active_terminal(&state, connection_id, result);
     result
 }
@@ -162,14 +189,20 @@ impl Actor {
         staged: Vec<ServerMessage>,
     ) -> Result<(), RealtimeError> {
         if let Some(bootstrap) = bootstrap {
-            publish_event(
-                &self.events,
-                self.connection_id,
-                decode::bootstrap(&bootstrap)?,
-            )?;
+            let payload =
+                super::bounded::with_limit(self.config.collection_entries_limit(), || {
+                    decode::bootstrap(&bootstrap)
+                })?;
+            if payload.requires_resync() {
+                return Err(RealtimeError::ResyncRequired {
+                    connection_id: self.connection_id,
+                    reason: ResyncReason::UnsupportedEvent,
+                });
+            }
+            self.events.publish(payload);
         }
         for message in staged {
-            self.handle_server_message(message)?;
+            self.handle_server_message(message);
         }
         Ok(())
     }
@@ -177,131 +210,65 @@ impl Actor {
     async fn event_loop(&mut self) -> Result<(), RealtimeError> {
         loop {
             let pending_deadline = self.pending.next_deadline();
-            let liveness_deadline = self
-                .last_received
-                .checked_add(self.config.liveness_deadline())
-                .ok_or(RealtimeError::InvalidConfiguration {
-                    field: "liveness_timeout",
-                    reason: "is too large for a monotonic deadline",
-                })?;
-            tokio::select! {
+            let liveness_deadline = self.probe.as_ref().map_or_else(
+                || self.last_received + self.config.liveness_deadline(),
+                receive::ActiveProbe::deadline,
+            );
+            let wake = tokio::select! {
                 biased;
-                () = self.request_abandoned.cancelled() => {
-                    return Err(RealtimeError::ResyncRequired {
-                        connection_id: self.connection_id,
-                        reason: ResyncReason::RequestAbandoned,
-                    });
-                }
-                () = self.cancellation.cancelled() => {
+                () = self.cancellation.cancelled() => Wake::Shutdown,
+                () = self.request_abandoned.notified() => Wake::Abandoned,
+                () = wait_for_deadline(pending_deadline) => Wake::Deadline,
+                () = time::sleep_until(liveness_deadline), if self.batch.is_none() => Wake::Probe,
+                _ = self.heartbeat.tick() => Wake::Heartbeat,
+                wake = async {
+                    tokio::select! {
+                        command = self.commands.recv() => Wake::Command(command),
+                        message = self.reader.next(), if self.batch.is_none() => Wake::Socket(message),
+                        () = std::future::ready(()), if self.batch.is_some() => Wake::Record,
+                    }
+                } => wake,
+            };
+            match wake {
+                Wake::Shutdown => {
                     self.close().await;
                     return Ok(());
                 }
-                () = wait_for_deadline(pending_deadline) => {
-                    if let Some(request_id) = self.pending.expire() {
-                        return Err(RealtimeError::RequestTimeout { request_id });
-                    }
+                Wake::Abandoned => self.pending.reap_cancelled(),
+                Wake::Deadline => {
+                    self.pending.expire();
                 }
-                () = time::sleep_until(liveness_deadline) => {
-                    return Err(RealtimeError::LivenessTimeout);
-                }
-                _ = self.heartbeat.tick() => {
-                    self.heartbeat_deadline =
-                        writer::advance_heartbeat_deadline(self.heartbeat_deadline)?;
+                Wake::Probe => self.check_liveness().await?,
+                Wake::Heartbeat => {
                     self.send_heartbeat().await?;
                 }
-                message = self.reader.next() => self.handle_socket(message).await?,
-                command = self.commands.recv() => {
-                    let Some(command) = command else {
-                        self.close().await;
-                        return Ok(());
-                    };
-                    self.handle_command(command).await?;
+                Wake::Command(Some(command)) => self.handle_command(command).await?,
+                Wake::Command(None) => return Err(RealtimeError::ActorStopped),
+                Wake::Socket(message) => self.handle_socket(message).await?,
+                Wake::Record => {
+                    self.handle_next_record();
+                    tokio::task::yield_now().await;
                 }
             }
         }
-    }
-
-    async fn handle_socket(
-        &mut self,
-        message: Option<Result<Message, tokio_tungstenite::tungstenite::Error>>,
-    ) -> Result<(), RealtimeError> {
-        let message = message
-            .ok_or(RealtimeError::ServerClosed)?
-            .map_err(|_| RealtimeError::Transport)?;
-        self.last_received = Instant::now();
-        match message {
-            Message::Text(text) => self.handle_frame(self.codec.decode(text.as_str())?),
-            Message::Ping(payload) => self.send_message(Message::Pong(payload)).await,
-            Message::Pong(_) => Ok(()),
-            Message::Close(_) => Err(RealtimeError::ServerClosed),
-            Message::Binary(_) | Message::Frame(_) => Err(RealtimeError::Protocol),
-        }
-    }
-
-    fn handle_frame(&mut self, frame: ServerFrame) -> Result<(), RealtimeError> {
-        match frame {
-            ServerFrame::Heartbeat => Ok(()),
-            ServerFrame::Messages(messages) => {
-                for message in messages {
-                    self.handle_server_message(message)?;
-                }
-                Ok(())
-            }
-            ServerFrame::Close { code, reason } => {
-                tracing::debug!(
-                    code,
-                    reason_length = reason.len(),
-                    "Tradovate logical WebSocket close"
-                );
-                Err(RealtimeError::ServerClosed)
-            }
-            ServerFrame::Open => Err(RealtimeError::Protocol),
-        }
-    }
-
-    fn handle_server_message(&mut self, message: ServerMessage) -> Result<(), RealtimeError> {
-        let payload = match message {
-            ServerMessage::Response(response) => {
-                let request_id = response.request_id();
-                match self.pending.remove_for_response(request_id, Instant::now()) {
-                    Some(PendingReply::Active { endpoint, reply }) => {
-                        match response::classify(response, request_id, endpoint, &self.rate_limits)
-                        {
-                            response::Disposition::Complete(result) => {
-                                drop(reply.send(result));
-                                return Ok(());
-                            }
-                            response::Disposition::Terminate(error) => {
-                                drop(reply.send(Err(error)));
-                                return Err(error);
-                            }
-                        }
-                    }
-                    Some(PendingReply::Expired(reply)) => {
-                        let error = RealtimeError::RequestTimeout { request_id };
-                        drop(reply.send(Err(error)));
-                        return Err(error);
-                    }
-                    None => {}
-                }
-                decode::message(ServerMessage::Response(response))?
-            }
-            message @ (ServerMessage::Event(_) | ServerMessage::Unknown(_)) => {
-                decode::message(message)?
-            }
-        };
-        publish_event(&self.events, self.connection_id, payload)
     }
 
     async fn handle_command(&mut self, command: Command) -> Result<(), RealtimeError> {
         match command {
             Command::Request {
+                connection_id,
+                request_id,
+                invocation,
                 endpoint,
                 query,
                 body,
                 deadline,
                 reply,
             } => {
+                if connection_id != self.connection_id || self.cancellation.is_cancelled() {
+                    drop(reply.send(Err(RealtimeError::StaleGeneration { connection_id })));
+                    return Ok(());
+                }
                 if reply.is_closed() {
                     return Ok(());
                 }
@@ -311,7 +278,6 @@ impl Actor {
                     })));
                     return Ok(());
                 }
-                let request_id = self.pending.allocate_request_id()?;
                 if deadline <= Instant::now() {
                     drop(reply.send(Err(RealtimeError::RequestTimeout { request_id })));
                     return Ok(());
@@ -334,7 +300,11 @@ impl Actor {
                     })));
                     return Ok(());
                 }
-                if let Err(error) = self.send_before(frame, deadline).await {
+                if deadline <= Instant::now() || !invocation.start() {
+                    drop(reply.send(Err(RealtimeError::RequestQueueTimeout)));
+                    return Ok(());
+                }
+                if let Err(error) = self.send_message(Message::text(frame)).await {
                     drop(reply.send(Err(RealtimeError::RequestOutcomeUncertain { request_id })));
                     return Err(error);
                 }
@@ -351,30 +321,14 @@ impl Actor {
 
     async fn send_message(&mut self, message: Message) -> Result<(), RealtimeError> {
         let operation_deadline = Instant::now()
-            .checked_add(self.config.request_deadline())
+            .checked_add(self.config.write_deadline())
             .ok_or(RealtimeError::InvalidConfiguration {
-                field: "request_timeout",
+                field: "write_timeout",
                 reason: "is too large for a monotonic deadline",
             })?;
-        let control = writer::SendControl::new(
-            self.connection_id,
-            &self.cancellation,
-            &self.request_abandoned,
-            self.heartbeat_deadline,
-            operation_deadline,
-        );
+        let control =
+            writer::SendControl::new(self.connection_id, &self.cancellation, operation_deadline);
         writer::send(&mut self.writer, message, control).await
-    }
-
-    async fn send_before(&mut self, frame: String, deadline: Instant) -> Result<(), RealtimeError> {
-        let control = writer::SendControl::new(
-            self.connection_id,
-            &self.cancellation,
-            &self.request_abandoned,
-            self.heartbeat_deadline,
-            deadline,
-        );
-        writer::send(&mut self.writer, Message::text(frame), control).await
     }
 
     async fn close(&mut self) {

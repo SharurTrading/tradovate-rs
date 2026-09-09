@@ -51,10 +51,8 @@ pub enum DisconnectReason {
     Transport,
     /// The server violated the expected protocol state or typed payload contract.
     Protocol,
-    /// No inbound traffic arrived before the liveness deadline.
+    /// A transmitted active WebSocket probe received no matching pong in time.
     LivenessTimeout,
-    /// An admitted request did not complete before its deadline.
-    RequestTimeout,
     /// The server closed the WebSocket or logical session.
     ServerClosed,
     /// Authentication failed or timed out.
@@ -69,6 +67,8 @@ pub enum DisconnectReason {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ResyncReason {
+    /// An application record could not be decoded; the transport remains active.
+    MalformedRecord,
     /// The bounded event queue filled before the consumer drained it.
     EventBufferOverflow,
     /// The active transport ended unexpectedly, leaving an unknown event gap.
@@ -95,14 +95,17 @@ pub enum RealtimeState {
         /// The active generation.
         connection_id: ConnectionId,
     },
-    /// The generation stopped through caller-requested shutdown before a gap.
+    /// The generation ended through shutdown or failed establishment.
+    /// The `reason` field identifies its termination category.
     Closed {
         /// The stopped generation.
         connection_id: ConnectionId,
         /// Stable, secret-safe termination category.
         reason: DisconnectReason,
     },
-    /// A transport gap invalidated local projections.
+    /// The active generation ended and consumer projections require recovery.
+    /// Local nonterminal gaps instead arrive as `ContinuityGap` events while
+    /// this latest-state view remains `Ready`.
     ResyncRequired {
         /// The affected generation.
         connection_id: ConnectionId,
