@@ -134,21 +134,8 @@ jobs:
       - name: cargo deny
         run: cargo deny --locked check
 
-      - name: Prove the advisory-exempt dependency is inactive
-        shell: bash
-        run: |
-          if cargo tree --locked --all-features --edges normal,build,dev --prefix none \
-            | grep --extended-regexp --quiet '^rkyv v0\.7\.'; then
-            echo "::error::RUSTSEC-2026-0235 exemption is invalid because rkyv 0.7 is active"
-            exit 1
-          fi
-
       - name: cargo audit
-        # Cargo records rust_decimal's disabled optional rkyv 0.7 feature in the
-        # lockfile. The preceding feature-graph gate proves it is not compiled.
-        run: >-
-          cargo audit --file Cargo.lock --deny warnings
-          --ignore RUSTSEC-2026-0235
+        run: cargo audit --file Cargo.lock --deny warnings
 
   secret-scan:
     name: Secret scan (full history)

@@ -7,7 +7,6 @@ SPDX-License-Identifier: MIT-0
 
 This project is pre-release. No release entries have been published.
 
-
 ## [Unreleased] — 0.2.0
 
 ### Breaking recovery changes
@@ -33,6 +32,15 @@ This project is pre-release. No release entries have been published.
 - Yield between coalesced records and index pending deadlines. Keep Tradovate's 2.5-second
   heartbeat, use active ping/pong liveness, and separate socket-write/request deadlines.
   Buffered decoding cannot expire a pong that the reader has not had a chance to observe.
+
+### Dependency and CI maintenance
+
+- Update `rust_decimal` from 1.42.1 to 1.43.0, retaining `std`-only features
+  and the exact-decimal wire contract ([#10](https://github.com/SharurTrading/tradovate-rs/pull/10)).
+- Retire the inactive `RUSTSEC-2026-0235` exception and its feature-graph guard:
+  `rkyv` 0.7 no longer appears in the lockfile. CI now runs `cargo audit` without ignores.
+- Update the SHA-pinned `taiki-e/install-action` from 2.87.0 to 2.87.4
+  ([#9](https://github.com/SharurTrading/tradovate-rs/pull/9)).
 
 See README migration guidance and ADR 0002. This pre-1.0 minor version denotes the
 changed public recovery contract. `publish = false` remains; no tag or registry release.
