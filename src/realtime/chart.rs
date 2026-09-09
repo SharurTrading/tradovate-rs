@@ -93,7 +93,8 @@ impl RealtimeSession {
     /// # Errors
     ///
     /// Returns a socket-kind, encoding, capacity, provider, timeout, protocol,
-    /// or disconnect failure.
+    /// or disconnect failure. Returns [`RealtimeError::StaleGeneration`] without
+    /// enqueueing when the ID belongs to another socket or this session has ended.
     pub async fn cancel_chart(&self, id: RealtimeChartId) -> Result<(), RealtimeError> {
         self.require_market_data_socket()?;
         if id.connection_id() != self.connection_id() {

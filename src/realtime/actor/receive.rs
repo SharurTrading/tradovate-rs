@@ -105,7 +105,7 @@ impl Actor {
                 let request_id = response.request_id();
                 match self.pending.remove_for_response(request_id, Instant::now()) {
                     Some(PendingReply::Active { endpoint, reply }) => {
-                        let response::Disposition::Complete(result) =
+                        let result =
                             response::classify(response, request_id, endpoint, &self.rate_limits);
                         if matches!(result, Err(RealtimeError::Protocol)) {
                             self.events

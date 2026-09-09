@@ -42,48 +42,39 @@ async fn burst(active_consumer: bool, liveness: std::time::Duration) {
     });
     assert!(received.await.is_ok());
     if active_consumer {
-        for expected in 1..=EVENTS {
-            let item = event(&mut connection).await;
-            assert_eq!(item.connection_id(), generation);
-            let RealtimeEventPayload::Chart(chart) = item.into_payload() else {
-                panic!("unexpected gap");
-            };
-            assert!(
-                matches!(&chart.packets()[0], tradovate_client::realtime::ChartPacket::EndOfHistory(id)
-                if id.get() == i64::try_from(expected).unwrap_or_default())
-            );
-        }
-        assert!(
-            request
-                .await
-                .unwrap_or_else(|e| panic!("request join: {e}"))
-                .is_ok()
-        );
-    } else {
-        // Waiting for the final completion proves the entire burst was decoded
-        // with the event consumer paused, not merely copied to a kernel buffer.
-        assert!(
-            request
-                .await
-                .unwrap_or_else(|e| panic!("request join: {e}"))
-                .is_ok()
-        );
+        drain_burst(&mut connection, generation).await;
     }
+    // For a paused consumer this completion proves the entire burst was decoded
+    // before draining, not merely copied into a kernel buffer.
+    assert!(
+        request
+            .await
+            .unwrap_or_else(|e| panic!("request join: {e}"))
+            .is_ok()
+    );
     if !active_consumer {
-        for expected in 1..=EVENTS {
-            let item = event(&mut connection).await;
-            assert_eq!(item.connection_id(), generation);
-            let RealtimeEventPayload::Chart(chart) = item.into_payload() else {
-                panic!("unexpected gap");
-            };
-            assert!(
-                matches!(&chart.packets()[0], tradovate_client::realtime::ChartPacket::EndOfHistory(id)
-                if id.get() == i64::try_from(expected).unwrap_or_default())
-            );
-        }
+        drain_burst(&mut connection, generation).await;
     }
     assert!(connection.shutdown().await.is_ok());
     assert!(server.await.is_ok());
+}
+
+async fn drain_burst(
+    connection: &mut tradovate_client::realtime::RealtimeConnection,
+    generation: tradovate_client::realtime::ConnectionId,
+) {
+    for expected in 1..=EVENTS {
+        let item = event(connection).await;
+        assert_eq!(item.connection_id(), generation);
+        let payload = item.into_payload();
+        let RealtimeEventPayload::Chart(chart) = payload else {
+            panic!("unexpected event: {payload:?}");
+        };
+        assert!(
+            matches!(&chart.packets()[0], tradovate_client::realtime::ChartPacket::EndOfHistory(id)
+            if id.get() == i64::try_from(expected).unwrap_or_default())
+        );
+    }
 }
 
 #[tokio::test]

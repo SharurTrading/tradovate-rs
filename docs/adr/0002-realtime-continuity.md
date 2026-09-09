@@ -64,6 +64,14 @@ evidence on panic/abort/runtime shutdown, so a stopped task cannot strand event 
 No destructor requires an ambient runtime or spawns a hidden runtime. The original
 caller runtime must continue running for asynchronous cleanup to finish.
 
+An in-progress WebSocket frame cannot safely be abandoned just to send `[]`.
+The 2.5-second tick is a scheduling requirement, not independent proof that a
+socket has failed. An active write therefore retains its separate bounded transport
+deadline (ten seconds by default); after it completes, overdue heartbeats precede
+ordinary work. Restoring the old heartbeat-deadline disconnect would reintroduce
+the local-pressure teardown this migration removes. Failed establishment retains
+its original stricter setup sequencing.
+
 ## Continuity and admission
 
 `RealtimeSession` captures one immutable generation before dispatch. It shares only
@@ -81,6 +89,9 @@ otherwise the result stays unknown. No subscription registry or total-count cap 
 introduced. Consumers retain uncertain subscription ownership until authoritative
 provider evidence or actual producer termination, never inferred reset/unsubscribe
 success. Late response metadata alone does not establish business success.
+Teardown during queue admission returns `StaleGeneration`, proving no enqueue;
+it does not invent a termination category from an earlier `Ready` state. The exact
+terminal result remains in the retained generation-ended event and shutdown result.
 
 The delivery owner retains bounded accepted events and independent fixed-size gap
 and terminal slots. The first provider shutdown notice is separately retained at its

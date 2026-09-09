@@ -36,15 +36,38 @@ async fn full_command_queue_honors_the_pre_send_deadline() {
     let cancellation = CancellationToken::new();
     let deadline = Instant::now() + Duration::from_millis(10);
 
-    let result = reserve_command_slot(
-        &commands,
-        &cancellation,
-        deadline,
-        RealtimeError::ActorStopped,
-    )
-    .await;
+    let result =
+        reserve_command_slot(&commands, &cancellation, deadline, ConnectionId::new(99)).await;
 
     assert!(matches!(result, Err(RealtimeError::RequestQueueTimeout)));
+}
+
+#[tokio::test]
+async fn cancelled_queue_admission_is_stale_and_retains_the_actual_terminal_error() {
+    let connection_id = ConnectionId::new(99);
+    let (commands, _receiver) = mpsc::channel(1);
+    assert!(commands.try_send(command()).is_ok());
+    let cancellation = CancellationToken::new();
+    let delivery = super::super::delivery::Delivery::new(connection_id, 1);
+    let reserve = reserve_command_slot(
+        &commands,
+        &cancellation,
+        Instant::now() + Duration::from_secs(1),
+        ConnectionId::new(99),
+    );
+    tokio::pin!(reserve);
+    assert!(futures_util::poll!(&mut reserve).is_pending());
+    delivery.end(Err(RealtimeError::ServerClosed));
+    cancellation.cancel();
+    assert!(
+        matches!(reserve.await, Err(RealtimeError::StaleGeneration { connection_id: id }) if id == connection_id)
+    );
+    assert!(matches!(
+        delivery.recv().await.map(RealtimeEvent::into_payload),
+        Some(super::super::RealtimeEventPayload::GenerationEnded(Err(
+            RealtimeError::ServerClosed
+        )))
+    ));
 }
 
 #[tokio::test]

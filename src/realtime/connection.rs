@@ -91,14 +91,15 @@ impl RealtimeConnection {
     /// Captures this immutable generation for concurrent subscription work.
     ///
     /// Capture before dispatching a task. The handle has no lifecycle or recovery
-    /// authority and cannot migrate onto a replacement socket.
+    /// authority and cannot migrate onto a replacement socket. Dropping this
+    /// connection owner terminates the generation; surviving session clones
+    /// then stop accepting work.
     #[must_use]
     pub fn session(&self) -> super::RealtimeSession {
         super::RealtimeSession {
             connection_id: self.connection_id,
             kind: self.kind,
             commands: self.commands.clone(),
-            state: self.state.clone(),
             cancellation: self.cancellation.clone(),
             request_abandoned: Arc::clone(&self.request_abandoned),
             request_timeout: self.request_timeout,
@@ -110,6 +111,8 @@ impl RealtimeConnection {
 
     /// Acknowledges a delivered gap after the caller installs snapshot/reconciliation
     /// recovery. Stale, undelivered and ended-generation markers return `false`.
+    /// Exhausting the generation's marker sequence permanently returns `false`;
+    /// recovery then requires a caller-owned replacement connection.
     #[must_use]
     pub fn acknowledge_continuity_gap(&mut self, gap: super::ContinuityGap) -> bool {
         self.events.acknowledge(gap)
@@ -297,17 +300,6 @@ impl Client {
                     Ok(()) => Err(RealtimeError::ActorStopped),
                     Err(error) => Err(error),
                 }
-            }
-        }
-    }
-}
-
-impl RealtimeState {
-    pub(super) const fn reason_or_stopped(self) -> crate::realtime::DisconnectReason {
-        match self {
-            Self::Closed { reason, .. } => reason,
-            Self::Connecting { .. } | Self::Ready { .. } | Self::ResyncRequired { .. } => {
-                crate::realtime::DisconnectReason::ActorStopped
             }
         }
     }

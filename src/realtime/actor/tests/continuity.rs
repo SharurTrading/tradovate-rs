@@ -17,12 +17,13 @@ async fn timeout_does_not_close_a_healthy_socket() {
     let client = authenticated_client(&url, "access", None);
     let config = RealtimeConfig::default().request_timeout(Duration::from_millis(100));
     let connection = connect(&client, SocketKind::User, config).await;
-    assert!(
+    assert!(matches!(
         connection
             .request_non_mutating("slow", "", "{}")
-            .await
-            .is_err()
-    );
+            .await,
+        Err(RealtimeError::RequestOutcomeUncertain { request_id })
+            if request_id == RequestId::new(3)
+    ));
     assert!(
         connection
             .request_non_mutating("fast", "", "{}")
@@ -93,13 +94,18 @@ async fn malformed_record_does_not_hide_a_co_batched_completion() {
 #[tokio::test]
 async fn ordinary_silence_does_not_close_a_healthy_socket() {
     let (listener, url) = bind().await;
+    let (probe, observed_probe) = oneshot::channel();
     let server = tokio::spawn(async move {
         let mut socket = accept(listener).await;
         authorize(&mut socket).await;
+        let mut probe = Some(probe);
         loop {
             match socket.next().await {
                 Some(Ok(Message::Ping(payload))) => {
                     send_message(&mut socket, Message::Pong(payload)).await;
+                    if let Some(probe) = probe.take() {
+                        assert!(probe.send(()).is_ok());
+                    }
                 }
                 Some(Ok(Message::Text(text))) if text == "[]" => {}
                 Some(Ok(Message::Text(_))) => {
@@ -115,6 +121,11 @@ async fn ordinary_silence_does_not_close_a_healthy_socket() {
     let config = RealtimeConfig::default().liveness_timeout(Duration::from_millis(20));
     let connection = connect(&client, SocketKind::User, config).await;
     time::sleep(Duration::from_millis(80)).await;
+    assert!(
+        time::timeout(Duration::from_secs(1), observed_probe)
+            .await
+            .is_ok_and(|r| r.is_ok())
+    );
     assert!(
         connection
             .request_non_mutating("fast", "", "{}")
@@ -135,4 +146,34 @@ fn burst_capacities_are_independent_of_payload_ceilings() {
             .validate()
             .is_ok()
     );
+}
+
+#[tokio::test]
+async fn oversized_user_filters_fail_before_sync_transmission() {
+    use crate::realtime::UserSyncConfig;
+    let (listener, url) = bind().await;
+    let server = tokio::spawn(async move {
+        let mut socket = accept(listener).await;
+        send_text(&mut socket, "o").await;
+        assert!(next_text(&mut socket).await.starts_with("authorize\n1\n"));
+        send_text(&mut socket, r#"a[{"i":1,"s":200}]"#).await;
+        // Failed establishment drops the socket without ever sending user sync.
+        let end = time::timeout(Duration::from_secs(1), socket.next()).await;
+        assert!(end.is_ok(), "failed setup did not close its socket");
+        assert!(!matches!(end, Ok(Some(Ok(Message::Text(_))))));
+    });
+    let client = authenticated_client(&url, "access", None);
+    let users = (1..=5_000)
+        .map(|id| crate::UserId::new(id).unwrap_or_else(|e| panic!("ID: {e}")))
+        .collect();
+    let sync = UserSyncConfig::for_users(users).unwrap_or_else(|e| panic!("sync: {e}"));
+    assert!(matches!(
+        client
+            .connect_user_realtime(RealtimeConfig::default().max_frame_bytes(128), sync)
+            .await,
+        Err(RealtimeError::Codec(
+            crate::realtime::CodecError::FrameTooLarge { max_bytes: 128, .. }
+        ))
+    ));
+    join(server).await;
 }

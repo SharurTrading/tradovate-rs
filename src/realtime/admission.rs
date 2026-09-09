@@ -83,6 +83,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn exhausted_identifiers_never_dispatch_or_reuse_the_final_identity() {
+        let gate = Admission::new();
+        gate.activate(u64::MAX);
+        for _ in 0..2 {
+            assert_eq!(
+                gate.enqueue(ConnectionId::new(1), |_| panic!("exhausted dispatch")),
+                Err(RealtimeError::RequestIdExhausted)
+            );
+        }
+    }
+
+    #[test]
     fn queued_abandonment_prevents_start_but_started_outcomes_stay_unknown() {
         let queued = Invocation::new();
         assert!(queued.abandon());

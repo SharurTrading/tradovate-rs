@@ -323,7 +323,7 @@ impl Actor {
         let operation_deadline = Instant::now()
             .checked_add(self.config.write_deadline())
             .ok_or(RealtimeError::InvalidConfiguration {
-                field: "request_timeout",
+                field: "write_timeout",
                 reason: "is too large for a monotonic deadline",
             })?;
         let control =

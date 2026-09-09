@@ -3,12 +3,10 @@
 
 //! Generation-bound operational request admission, independent of event reception.
 
-use super::{
-    ConnectionId, FrameCodec, RealtimeError, RealtimeState, Response, SocketKind, actor::Command,
-};
+use super::{ConnectionId, FrameCodec, RealtimeError, Response, SocketKind, actor::Command};
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{mpsc, oneshot, watch},
+    sync::{mpsc, oneshot},
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
@@ -18,12 +16,13 @@ use tokio_util::sync::CancellationToken;
 /// This does not keep the connection owner alive or authorize teardown/recovery.
 /// Unknown subscription outcomes remain the caller's responsibility until exact
 /// provider evidence or `GenerationEnded`; no subscription set is stored here.
+/// Queue admission cancelled by teardown returns `StaleGeneration` before enqueue;
+/// the owner's retained `GenerationEnded` event carries the actual terminal result.
 #[derive(Clone)]
 pub struct RealtimeSession {
     pub(super) connection_id: ConnectionId,
     pub(super) kind: SocketKind,
     pub(super) commands: mpsc::Sender<Command>,
-    pub(super) state: watch::Receiver<RealtimeState>,
     pub(super) cancellation: CancellationToken,
     pub(super) request_abandoned: Arc<tokio::sync::Notify>,
     pub(super) request_timeout: Duration,
@@ -50,10 +49,6 @@ impl RealtimeSession {
     #[must_use]
     pub const fn socket_kind(&self) -> SocketKind {
         self.kind
-    }
-
-    fn state(&self) -> RealtimeState {
-        *self.state.borrow()
     }
 
     fn ensure_active(&self) -> Result<(), RealtimeError> {
@@ -92,13 +87,13 @@ impl RealtimeSession {
                 reason: "is too large for a monotonic deadline",
             },
         )?;
-        let disconnected = RealtimeError::Disconnected {
-            connection_id: self.connection_id,
-            reason: self.state().reason_or_stopped(),
-        };
-        let permit =
-            reserve_command_slot(&self.commands, &self.cancellation, deadline, disconnected)
-                .await?;
+        let permit = reserve_command_slot(
+            &self.commands,
+            &self.cancellation,
+            deadline,
+            self.connection_id,
+        )
+        .await?;
         self.ensure_active()?;
         let (reply, response) = oneshot::channel();
         let invocation = super::admission::Invocation::new();
@@ -167,13 +162,13 @@ pub(super) async fn reserve_command_slot<'a>(
     commands: &'a mpsc::Sender<Command>,
     cancellation: &CancellationToken,
     deadline: Instant,
-    disconnected: RealtimeError,
+    connection_id: ConnectionId,
 ) -> Result<mpsc::Permit<'a, Command>, RealtimeError> {
     tokio::select! {
         biased;
-        () = cancellation.cancelled() => Err(disconnected),
+        () = cancellation.cancelled() => Err(RealtimeError::StaleGeneration { connection_id }),
         () = tokio::time::sleep_until(deadline) => Err(RealtimeError::RequestQueueTimeout),
-        result = commands.reserve() => result.map_err(|_| RealtimeError::ActorStopped),
+        result = commands.reserve() => result.map_err(|_| RealtimeError::StaleGeneration { connection_id }),
     }
 }
 

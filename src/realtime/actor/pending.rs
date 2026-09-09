@@ -138,6 +138,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn indexed_expiry_and_cancellation_reclaim_exactly_their_entries() {
+        let mut pending = PendingRequests::with_capacity(3);
+        let now = Instant::now();
+        let (later, later_reply) = oneshot::channel();
+        let (expired, mut expired_reply) = oneshot::channel();
+        let (active, active_reply) = oneshot::channel();
+        pending.insert(
+            RequestId::new(3),
+            "fixture",
+            now + Duration::from_mins(1),
+            later,
+        );
+        pending.insert(RequestId::new(2), "fixture", now, expired);
+        pending.insert(
+            RequestId::new(4),
+            "fixture",
+            now + Duration::from_mins(2),
+            active,
+        );
+        assert_eq!(pending.next_deadline(), Some(now));
+        pending.expire();
+        assert!(
+            matches!(expired_reply.try_recv(), Ok(Err(RealtimeError::RequestOutcomeUncertain { request_id })) if request_id == RequestId::new(2))
+        );
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pending.next_deadline(), Some(now + Duration::from_mins(1)));
+        drop(later_reply);
+        pending.reap_cancelled();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending.next_deadline(), Some(now + Duration::from_mins(2)));
+        assert!(matches!(
+            pending.remove_for_response(RequestId::new(4), now),
+            Some(PendingReply::Active { .. })
+        ));
+        drop(active_reply);
+        assert_eq!(pending.len(), 0);
+        assert_eq!(pending.next_deadline(), None);
+    }
+
+    #[test]
     fn response_observed_at_deadline_is_expired() {
         let mut pending = PendingRequests::with_capacity(1);
         let request_id = RequestId::new(2);

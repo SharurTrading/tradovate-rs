@@ -261,7 +261,6 @@ impl RealtimeError {
             | Self::UserSyncInvalidBootstrap
             | Self::UserSyncPenalty { .. } => DisconnectReason::Bootstrap,
             Self::LivenessTimeout => DisconnectReason::LivenessTimeout,
-            Self::RequestTimeout { .. } => DisconnectReason::RequestTimeout,
             Self::ServerClosed => DisconnectReason::ServerClosed,
             Self::Protocol | Self::Codec(_) | Self::InvalidEvent { .. } => {
                 DisconnectReason::Protocol
@@ -279,6 +278,7 @@ impl RealtimeError {
             | Self::StaleGeneration { .. }
             | Self::PendingLimitReached { .. }
             | Self::RequestQueueTimeout
+            | Self::RequestTimeout { .. }
             | Self::WrongSocketKind { .. }
             | Self::ProviderRejected { .. }
             | Self::ProviderBusinessFailure { .. }

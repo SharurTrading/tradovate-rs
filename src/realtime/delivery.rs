@@ -11,6 +11,9 @@ use tokio::sync::Notify;
 use super::{ConnectionId, RealtimeError, RealtimeEvent, RealtimeEventPayload, ResyncReason};
 
 /// An opaque recovery marker for exactly one discontinuity on one socket.
+///
+/// If this generation exhausts its marker sequence, acknowledgement permanently
+/// fails closed. The caller then needs a replacement connection for recovery.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ContinuityGap {
     connection_id: ConnectionId,
@@ -220,6 +223,59 @@ impl Delivery {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shutdown_fixture() -> RealtimeEventPayload {
+        RealtimeEventPayload::Shutdown(super::super::ShutdownEvent {
+            reason_code: super::super::ShutdownReason::Maintenance,
+            explanation: None,
+        })
+    }
+
+    fn accepted_fixture() -> RealtimeEventPayload {
+        RealtimeEventPayload::UnmatchedResponse(super::super::event::UnmatchedResponse::new(
+            super::super::RequestId::new(3),
+            200,
+        ))
+    }
+
+    #[tokio::test]
+    async fn saturated_lifecycle_notices_preserve_prefix_gap_and_exactly_one_end() {
+        for notice_before_gap in [false, true] {
+            let delivery = Delivery::new(ConnectionId::new(1), 1);
+            delivery.publish(accepted_fixture());
+            if notice_before_gap {
+                delivery.publish(shutdown_fixture());
+                // A second retained notice installs loss rather than growing memory.
+                delivery.publish(shutdown_fixture());
+            } else {
+                delivery.publish(accepted_fixture());
+                delivery.publish(shutdown_fixture());
+            }
+            delivery.end(Err(RealtimeError::ServerClosed));
+            assert!(matches!(
+                delivery.recv().await.map(RealtimeEvent::into_payload),
+                Some(RealtimeEventPayload::UnmatchedResponse(_))
+            ));
+            let first = delivery.recv().await.map(RealtimeEvent::into_payload);
+            let second = delivery.recv().await.map(RealtimeEvent::into_payload);
+            let (notice, gap) = if notice_before_gap {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            assert!(matches!(notice, Some(RealtimeEventPayload::Shutdown(_))));
+            assert!(
+                matches!(gap, Some(RealtimeEventPayload::ContinuityGap(gap)) if gap.reason() == ResyncReason::EventBufferOverflow)
+            );
+            assert!(matches!(
+                delivery.recv().await.map(RealtimeEvent::into_payload),
+                Some(RealtimeEventPayload::GenerationEnded(Err(
+                    RealtimeError::ServerClosed
+                )))
+            ));
+            assert!(delivery.recv().await.is_none());
+        }
+    }
 
     #[tokio::test]
     async fn acknowledgement_rejects_stale_producers_and_markers() {

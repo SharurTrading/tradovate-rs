@@ -288,6 +288,8 @@ Version 0.2 changes the recovery contract. A consumer must handle and acknowledg
 nonterminal gaps while connected, retain uncertain subscription ownership, and treat
 `GenerationEnded` as separate evidence. Existing serial subscription methods remain;
 use `RealtimeSession` for concurrency. Chart IDs cannot be applied to another socket.
+The obsolete `DisconnectReason::RequestTimeout` variant is removed; request expiry
+is reported by the individual invocation and does not end the socket.
 
 `RealtimeConfig` validates positive, representable controls independently. Defaults:
 

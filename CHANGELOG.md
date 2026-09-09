@@ -20,6 +20,8 @@ This project is pre-release. No release entries have been published.
 - Add cloneable `RealtimeSession` handles for generation-bound concurrent admission,
   `wait_ended`, and allocating-generation identity on chart IDs. Reject stale work
   before enqueueing. Replacements remain caller-owned; no automatic reconnect is added.
+- Remove the obsolete `DisconnectReason::RequestTimeout` category; request
+  deadlines no longer terminate a socket.
 - Return uncertain outcomes for admitted timeouts; atomically prevent cancelled queued
   requests from transmitting. Never reuse request identities or retry unknown operations.
 - Track teardown after cancelled setup/shutdown and final-owner drop outside Tokio.

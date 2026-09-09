@@ -63,6 +63,21 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn explicit_cancellation_precedes_an_expired_write_deadline() {
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let id = ConnectionId::new(7);
+        let control = SendControl::new(id, &cancellation, Instant::now());
+        assert_eq!(
+            wait_for_write(std::future::pending(), control).await,
+            Err(RealtimeError::Disconnected {
+                connection_id: id,
+                reason: DisconnectReason::Shutdown
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn blocked_transport_write_has_a_separate_deadline() {
         let cancellation = CancellationToken::new();
         let now = Instant::now();

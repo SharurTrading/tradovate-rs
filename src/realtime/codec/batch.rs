@@ -116,6 +116,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn quoted_delimiters_preserve_records_and_the_configured_limit() {
+        let input =
+            r#"a[{"i":2,"s":200,"d":{"text":", ] \" escaped"}},{"i":3,"s":200},{"i":4,"s":200}]"#;
+        let mut batch = RecordBatch::new(input.into(), 2).unwrap_or_else(|e| panic!("batch: {e}"));
+        for expected in [2, 3] {
+            assert!(
+                matches!(batch.next(), Some(Ok(ServerMessage::Response(r))) if r.request_id().value() == expected)
+            );
+        }
+        assert!(matches!(
+            batch.next(),
+            Some(Err(Error::TooManyMessages {
+                actual_messages: 3,
+                max_messages: 2
+            }))
+        ));
+        assert!(batch.next().is_none());
+    }
+
+    #[test]
     fn malformed_middle_record_preserves_later_completion() {
         let mut batch = RecordBatch::new(r#"a[{"d":bad},{"i":2,"s":200}]"#.into(), 4)
             .unwrap_or_else(|e| panic!("batch: {e}"));
