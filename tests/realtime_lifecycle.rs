@@ -299,6 +299,7 @@ async fn failed_active_probe_retains_the_original_liveness_error() {
     assert!(server.await.is_ok());
 }
 
+/// An unanswered active probe expires even when successive valid batches arrive.
 #[tokio::test]
 async fn continuous_batches_cannot_renew_an_unanswered_probe_forever() {
     use std::time::Duration;
@@ -349,9 +350,9 @@ async fn continuous_batches_cannot_renew_an_unanswered_probe_forever() {
     );
 }
 
-// A paused Tokio clock normally jumps to the next timer when TCP is pending.
-// Keep the current-thread runtime runnable so only explicit advance calls move
-// time, with a separate real-time watchdog for fixture failures. No task is spawned.
+/// A paused Tokio clock normally jumps to the next timer when TCP is pending.
+/// Keep the current-thread runtime runnable so only explicit advance calls move
+/// time, with a separate real-time watchdog for fixture failures. No task is spawned.
 async fn with_manual_clock<T>(operation: impl std::future::Future<Output = T>) -> T {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     tokio::pin!(operation);
