@@ -88,7 +88,7 @@ struct Actor {
     request_abandoned: std::sync::Arc<tokio::sync::Notify>,
     pending: PendingRequests,
     last_received: Instant,
-    probe: Option<(Vec<u8>, Instant)>,
+    probe: Option<receive::ActiveProbe>,
     next_probe: u64,
     batch: Option<super::codec::RecordBatch>,
     batch_epoch: Option<u64>,
@@ -212,7 +212,7 @@ impl Actor {
             let pending_deadline = self.pending.next_deadline();
             let liveness_deadline = self.probe.as_ref().map_or_else(
                 || self.last_received + self.config.liveness_deadline(),
-                |(_, deadline)| *deadline,
+                receive::ActiveProbe::deadline,
             );
             let wake = tokio::select! {
                 biased;

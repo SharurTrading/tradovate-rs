@@ -116,8 +116,11 @@ The WebSocket retains one incoming message while records are processed increment
 Each record yields to the executor, and fair request/data selection prevents a
 continuous data stream from excluding command admission. Heartbeats and cancellation
 are polled before ordinary work. Liveness expiration pauses while the reader is
-deliberately parked behind a buffered batch; finishing that batch grants a full
-pong-read window, so decoding time cannot manufacture a failed active probe.
+deliberately parked behind a buffered batch; finishing the first such batch grants
+one full pong-read grace interval per probe. The original probe deadline is retained,
+and subsequent batches cannot renew the grace interval. Buffered decoding alone
+cannot manufacture a failed probe, while continuous data without pong cannot keep
+an unanswered probe alive indefinitely.
 Pending deadlines use an ordered index, avoiding a
 full pending-map scan on every data record. No completed subscription consumes a
 pending slot. Caller-owned user-sync filter lists have no hard ID-count quota;

@@ -9,6 +9,18 @@ use tokio_tungstenite::tungstenite::{Error as SocketError, Message};
 use super::{Actor, PendingReply, RealtimeError, ResyncReason, ServerMessage, decode, response};
 use crate::realtime::{ServerFrame, codec::RecordBatch};
 
+pub(super) struct ActiveProbe {
+    payload: Vec<u8>,
+    deadline: Instant,
+    read_grace: Option<Instant>,
+}
+
+impl ActiveProbe {
+    pub(super) fn deadline(&self) -> Instant {
+        self.read_grace.unwrap_or(self.deadline)
+    }
+}
+
 impl Actor {
     pub(super) async fn check_liveness(&mut self) -> Result<(), RealtimeError> {
         if self.probe.is_some() {
@@ -21,7 +33,11 @@ impl Actor {
         let payload = self.next_probe.to_be_bytes().to_vec();
         self.send_message(Message::Ping(payload.clone().into()))
             .await?;
-        self.probe = Some((payload, Instant::now() + self.config.liveness_deadline()));
+        self.probe = Some(ActiveProbe {
+            payload,
+            deadline: Instant::now() + self.config.liveness_deadline(),
+            read_grace: None,
+        });
         Ok(())
     }
 
@@ -64,7 +80,7 @@ impl Actor {
                 if self
                     .probe
                     .as_ref()
-                    .is_some_and(|(expected, _)| expected.as_slice() == payload.as_ref())
+                    .is_some_and(|probe| probe.payload.as_slice() == payload.as_ref())
                 {
                     self.probe = None;
                 }
@@ -92,8 +108,12 @@ impl Actor {
                 // behind it must receive a full read opportunity before expiry.
                 let now = Instant::now();
                 self.last_received = now;
-                if let Some((_, deadline)) = &mut self.probe {
-                    *deadline = now + self.config.liveness_deadline();
+                if let Some(probe) = &mut self.probe
+                    && probe.read_grace.is_none()
+                {
+                    // Exactly one read grace per probe. Repeated valid batches
+                    // cannot renew an unanswered ping indefinitely.
+                    probe.read_grace = Some(now + self.config.liveness_deadline());
                 }
             }
         }

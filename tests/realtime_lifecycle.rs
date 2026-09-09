@@ -300,6 +300,58 @@ async fn failed_active_probe_retains_the_original_liveness_error() {
 }
 
 #[tokio::test]
+async fn continuous_batches_cannot_renew_an_unanswered_probe_forever() {
+    use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
+    use tokio_tungstenite::tungstenite::Message;
+    use tradovate_client::realtime::RealtimeError;
+    let (client, listener) = fixture().await;
+    let (release, mut wait) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let mut socket = accept(&listener).await;
+        authorize(&mut socket).await;
+        assert!(matches!(socket.next().await, Some(Ok(Message::Ping(_)))));
+        let payload = br#"a[{"e":"chart","d":{"charts":[{"id":9,"eoh":true}]}}]"#;
+        let mut frame = vec![0x81, u8::try_from(payload.len()).unwrap_or_default()];
+        frame.extend_from_slice(payload);
+        let mut interval = tokio::time::interval(Duration::from_millis(2));
+        loop {
+            tokio::select! {
+                _ = &mut wait => break,
+                _ = interval.tick() => {
+                    // Write valid unmasked server frames directly so tungstenite's
+                    // queued automatic Pong stays unsent throughout the fixture.
+                    if socket.get_mut().write_all(&frame).await.is_err() { break; }
+                }
+            }
+        }
+    });
+    let mut connection = connect(
+        &client,
+        RealtimeConfig::default().liveness_timeout(Duration::from_millis(40)),
+    )
+    .await;
+    let result = tokio::time::timeout(Duration::from_millis(300), async {
+        let mut records = 0;
+        loop {
+            match event(&mut connection).await.into_payload() {
+                RealtimeEventPayload::Chart(_) => records += 1,
+                RealtimeEventPayload::GenerationEnded(result) => break (records, result),
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+    })
+    .await;
+    let _released = release.send(());
+    assert!(server.await.is_ok());
+    assert!(matches!(result, Ok((records, Err(RealtimeError::LivenessTimeout))) if records >= 2));
+    assert_eq!(
+        connection.shutdown().await,
+        Err(RealtimeError::LivenessTimeout)
+    );
+}
+
+#[tokio::test]
 async fn remote_close_retains_prefix_gap_and_end_in_order() {
     use futures_util::SinkExt;
     use tokio_tungstenite::tungstenite::Message;
