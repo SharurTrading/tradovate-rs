@@ -148,7 +148,7 @@ fn mark_item(depth: usize, item_started: &mut bool, items: &mut usize) {
     }
 }
 
-fn classify_message(raw: Box<RawValue>) -> Result<ServerMessage, Error> {
+pub(super) fn classify_message(raw: Box<RawValue>) -> Result<ServerMessage, Error> {
     let header: MessageHeader =
         serde_json::from_str(raw.get()).map_err(|error| json_error('a', &error))?;
     if header.request_id.is_some() || header.status.is_some() {

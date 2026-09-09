@@ -92,3 +92,13 @@ fn typed_filters_cutoff_and_full_org_fields_encode_without_raw_input() {
     assert!(!encoded.contains("entityTypes"));
     assert!(!encoded.contains("shardingExpression"));
 }
+
+#[test]
+fn caller_owned_filters_have_no_undocumented_subscription_count_cap() {
+    let users = (1..=5_000)
+        .map(|value| {
+            crate::UserId::new(value).unwrap_or_else(|error| panic!("fixture ID: {error}"))
+        })
+        .collect();
+    assert!(UserSyncConfig::for_users(users).is_ok());
+}

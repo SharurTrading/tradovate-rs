@@ -185,30 +185,27 @@ Authentication and protocol negotiation complete before readiness is published, 
 every event carries that immutable generation identifier. The current connection
 handle owns one generation only; it does not reconnect or replace itself.
 
-Frames, messages, writer/event queues, pending requests, decoded memory, and waits
-have named bounds. Queue capacities are cross-validated against the frame limit to
-enforce aggregate byte budgets, and client requests are preflighted before allocation
-or enqueue. Overflow or ambiguous request completion ends the generation.
-Event-buffer overflow terminates with `ResyncRequired(EventBufferOverflow)`; every
-unexpected post-readiness termination publishes `ResyncRequired(ConnectionLost)`.
-Dropping an admitted request poisons the generation with
-`ResyncRequired(RequestAbandoned)`, and a response observed at or after its stored
-deadline cannot win a timeout race. Only caller-requested shutdown publishes an
-ordinary `Closed` state.
+The recovery details below are superseded by
+[ADR 0002](0002-realtime-continuity.md). Queue capacities and payload/collection bounds
+are independently configurable client resource controls. Application-record errors
+and event overflow retain nonterminal gaps; request cancellation and timeout preserve
+uncertainty without ending healthy sockets. Accepted events precede the retained gap,
+acknowledgement installs a new delivery epoch, and pre-boundary records cannot publish
+after that acknowledgement. Transport termination is separately retained after socket
+producers stop, preserving the original error.
 
 The transport never owns canonical subscriptions or account/order/position truth.
-The caller creates a new connection after failure, replays its idempotent set, and
-performs snapshot-before-delta recovery. Recovery acknowledgement remains
-caller-owned.
+The caller creates replacements only after actual failure or explicit teardown and
+replays its desired set. Generation-bound operational handles permit concurrent work
+without migrating old callbacks onto a replacement socket. Only exact provider evidence
+or actual producer termination resolves uncertain subscription ownership.
 
-Tradovate's SockJS-derived connection uses one exact four-field request per WebSocket
-frame, bounded request correlation, and the required `[]` client heartbeat on an
-independent monotonic 2.5-second schedule. Every non-shutdown post-readiness use of the
-sole writer is bounded by the next heartbeat deadline, so writer backpressure ends the
-generation instead of starving the heartbeat. Each authenticated user-socket
-generation sends exactly one `user/syncrequest`; readiness waits for its bootstrap
-contract. A validated penalty installs its full monotonic cooldown and ends setup
-without an automatic retry.
+Tradovate's `[]` heartbeat stays on an independent 2.5-second monotonic schedule.
+Ordinary silence starts an active WebSocket ping/pong check, not teardown. Socket
+transmission has its own deadline, independent of request completion and heartbeat
+ticks. Each authenticated user-socket generation sends exactly one `user/syncrequest`;
+readiness waits for its bootstrap contract. A validated penalty installs its full
+monotonic cooldown and ends setup without an automatic retry.
 Authorization-era messages and messages co-batched with the sync response are staged
 under the event budget, then published strictly after bootstrap and before readiness.
 The realtime module is production compiled and selectively public. Its validated,

@@ -8,83 +8,103 @@ use std::time::Duration;
 use super::RealtimeError;
 
 const DEFAULT_MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
-const DEFAULT_MAX_MESSAGES_PER_FRAME: usize = 4_096;
-const DEFAULT_MAX_PENDING_REQUESTS: usize = 32;
-const DEFAULT_COMMAND_CAPACITY: usize = 8;
-const DEFAULT_EVENT_CAPACITY: usize = 32;
+const DEFAULT_MAX_MESSAGES_PER_FRAME: usize = 65_536;
+const DEFAULT_MAX_PENDING_REQUESTS: usize = 4_096;
+const DEFAULT_MAX_COLLECTION_ENTRIES: usize = 65_536;
+const DEFAULT_COMMAND_CAPACITY: usize = 4_096;
+const DEFAULT_EVENT_CAPACITY: usize = 65_536;
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_LIVENESS_TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
-const MAX_MESSAGES_PER_FRAME: usize = 65_536;
-const MAX_PENDING_REQUESTS: usize = 4_096;
-const MAX_CHANNEL_CAPACITY: usize = 65_536;
-const MAX_COMMAND_BUFFER_BYTES: usize = 64 * 1024 * 1024;
-const MAX_EVENT_BUFFER_BYTES: usize = 256 * 1024 * 1024;
-const MAX_PENDING_RESPONSE_BYTES: usize = 256 * 1024 * 1024;
-const MAX_TIMEOUT: Duration = Duration::from_hours(24);
-
 /// Resource ceilings and timeouts for one real-time socket generation.
+#[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RealtimeConfig {
     max_frame_bytes: usize,
     max_messages_per_frame: usize,
     max_pending_requests: usize,
+    max_collection_entries: usize,
     command_capacity: usize,
     event_capacity: usize,
     request_timeout: Duration,
+    write_timeout: Duration,
     liveness_timeout: Duration,
 }
 
 impl RealtimeConfig {
-    /// Sets the hard encoded size limit for every inbound and outbound frame.
-    /// Validation also checks this limit against each queue capacity so their
-    /// worst-case aggregate byte budgets remain bounded.
+    /// Sets the socket transmission deadline (default ten seconds), independent
+    /// of caller request timeouts. An unfinished write is a transport failure.
+    pub const fn write_timeout(mut self, timeout: Duration) -> Self {
+        self.write_timeout = timeout;
+        self
+    }
+
+    /// Returns the socket write deadline.
     #[must_use]
+    pub const fn write_deadline(&self) -> Duration {
+        self.write_timeout
+    }
+
+    /// Sets the maximum entries in each decoded array or object (default 65,536).
+    /// This is a configurable client memory control, not a provider quota.
+    /// Exceeding it on an active socket retains a gap without closing the socket.
+    pub const fn max_collection_entries(mut self, limit: usize) -> Self {
+        self.max_collection_entries = limit;
+        self
+    }
+
+    /// Returns the per-collection decoding limit.
+    #[must_use]
+    pub const fn collection_entries_limit(&self) -> usize {
+        self.max_collection_entries
+    }
+
+    /// Sets the hard encoded size limit for every inbound and outbound frame.
+    /// Defaults to 8 MiB. This is a caller resource
+    /// policy, not a documented provider payload limit.
     pub const fn max_frame_bytes(mut self, bytes: usize) -> Self {
         self.max_frame_bytes = bytes;
         self
     }
 
     /// Sets the maximum number of objects accepted in one inbound message frame.
-    #[must_use]
     pub const fn max_messages_per_frame(mut self, limit: usize) -> Self {
         self.max_messages_per_frame = limit;
         self
     }
 
-    /// Sets the maximum number of requests awaiting responses. Validation
-    /// rejects values whose worst-case response bytes exceed 256 MiB.
-    #[must_use]
+    /// Sets the maximum outstanding requests, not the number of subscriptions.
+    /// Saturation rejects new admission locally; completed requests free slots.
     pub const fn max_pending_requests(mut self, limit: usize) -> Self {
         self.max_pending_requests = limit;
         self
     }
 
-    /// Sets the bounded caller-to-actor command capacity. Validation rejects
-    /// values whose worst-case queued request bytes exceed 64 MiB.
-    #[must_use]
+    /// Sets the caller-to-actor queue capacity. Admission waits asynchronously
+    /// up to the request deadline; expiry before enqueueing proves not sent.
     pub const fn command_capacity(mut self, capacity: usize) -> Self {
         self.command_capacity = capacity;
         self
     }
 
-    /// Sets the bounded actor-to-caller event capacity. Validation rejects
-    /// values whose worst-case queued event bytes exceed 256 MiB.
-    #[must_use]
+    /// Sets the event capacity. Saturation retains a continuity gap after the
+    /// accepted prefix and fences data until the consumer acknowledges recovery.
     pub const fn event_capacity(mut self, capacity: usize) -> Self {
         self.event_capacity = capacity;
         self
     }
 
     /// Sets the deadline for connection setup, authorization, and requests.
-    #[must_use]
     pub const fn request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
         self
     }
 
-    /// Sets the maximum interval without any inbound socket traffic.
-    #[must_use]
+    /// Sets the idle interval before an active WebSocket ping and its pong wait.
+    /// Silence alone never terminates the socket. Only a missing matching pong
+    /// after a transmitted probe fails liveness. Processing an already-buffered
+    /// message grants at most one read grace interval per probe; further batches
+    /// cannot renew it. Outgoing heartbeats remain independent.
     pub const fn liveness_timeout(mut self, timeout: Duration) -> Self {
         self.liveness_timeout = timeout;
         self
@@ -126,7 +146,7 @@ impl RealtimeConfig {
         self.request_timeout
     }
 
-    /// Returns the inbound liveness timeout.
+    /// Returns the idle probe interval and pong timeout.
     #[must_use]
     pub const fn liveness_deadline(&self) -> Duration {
         self.liveness_timeout
@@ -134,48 +154,36 @@ impl RealtimeConfig {
 
     pub(super) fn validate(self) -> Result<Self, RealtimeError> {
         positive(self.max_frame_bytes, "max_frame_bytes")?;
+        if self.max_frame_bytes == usize::MAX {
+            return Err(RealtimeError::InvalidConfiguration {
+                field: "max_frame_bytes",
+                reason: "must be a finite transport byte limit",
+            });
+        }
         positive(self.max_messages_per_frame, "max_messages_per_frame")?;
+        positive(self.max_collection_entries, "max_collection_entries")?;
         positive(self.max_pending_requests, "max_pending_requests")?;
         positive(self.command_capacity, "command_capacity")?;
         positive(self.event_capacity, "event_capacity")?;
-        maximum(self.max_frame_bytes, MAX_FRAME_BYTES, "max_frame_bytes")?;
-        maximum(
-            self.max_messages_per_frame,
-            MAX_MESSAGES_PER_FRAME,
-            "max_messages_per_frame",
-        )?;
-        maximum(
-            self.max_pending_requests,
-            MAX_PENDING_REQUESTS,
-            "max_pending_requests",
-        )?;
-        maximum(
-            self.command_capacity,
-            MAX_CHANNEL_CAPACITY,
-            "command_capacity",
-        )?;
-        maximum(self.event_capacity, MAX_CHANNEL_CAPACITY, "event_capacity")?;
-        aggregate_budget(
-            self.max_frame_bytes,
-            self.command_capacity,
-            MAX_COMMAND_BUFFER_BYTES,
-            "max_frame_bytes * command_capacity",
-            "exceeds the 64 MiB aggregate command budget",
-        )?;
-        aggregate_budget(
-            self.max_frame_bytes,
-            self.event_capacity,
-            MAX_EVENT_BUFFER_BYTES,
-            "max_frame_bytes * event_capacity",
-            "exceeds the 256 MiB aggregate event budget",
-        )?;
-        aggregate_budget(
-            self.max_frame_bytes,
-            self.max_pending_requests,
-            MAX_PENDING_RESPONSE_BYTES,
-            "max_frame_bytes * max_pending_requests",
-            "exceeds the 256 MiB aggregate pending-response budget",
-        )?;
+        for (value, field) in [
+            (self.command_capacity, "command_capacity"),
+            (self.event_capacity, "event_capacity"),
+            (self.max_pending_requests, "max_pending_requests"),
+        ] {
+            if value > tokio::sync::Semaphore::MAX_PERMITS {
+                return Err(RealtimeError::InvalidConfiguration {
+                    field,
+                    reason: "exceeds Tokio's representable permit range",
+                });
+            }
+        }
+        if self.max_collection_entries > isize::MAX.cast_unsigned() {
+            return Err(RealtimeError::InvalidConfiguration {
+                field: "max_collection_entries",
+                reason: "exceeds the representable decoded collection length",
+            });
+        }
+        duration(self.write_timeout, "write_timeout")?;
         duration(self.request_timeout, "request_timeout")?;
         duration(self.liveness_timeout, "liveness_timeout")?;
         Ok(self)
@@ -188,9 +196,11 @@ impl Default for RealtimeConfig {
             max_frame_bytes: DEFAULT_MAX_FRAME_BYTES,
             max_messages_per_frame: DEFAULT_MAX_MESSAGES_PER_FRAME,
             max_pending_requests: DEFAULT_MAX_PENDING_REQUESTS,
+            max_collection_entries: DEFAULT_MAX_COLLECTION_ENTRIES,
             command_capacity: DEFAULT_COMMAND_CAPACITY,
             event_capacity: DEFAULT_EVENT_CAPACITY,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            write_timeout: DEFAULT_WRITE_TIMEOUT,
             liveness_timeout: DEFAULT_LIVENESS_TIMEOUT,
         }
     }
@@ -214,12 +224,6 @@ fn duration(value: Duration, field: &'static str) -> Result<(), RealtimeError> {
             reason: "must be positive",
         });
     }
-    if value > MAX_TIMEOUT {
-        return Err(RealtimeError::InvalidConfiguration {
-            field,
-            reason: "exceeds the 24-hour hard maximum",
-        });
-    }
     if tokio::time::Instant::now().checked_add(value).is_none() {
         return Err(RealtimeError::InvalidConfiguration {
             field,
@@ -227,37 +231,6 @@ fn duration(value: Duration, field: &'static str) -> Result<(), RealtimeError> {
         });
     }
     Ok(())
-}
-
-fn maximum(value: usize, maximum: usize, field: &'static str) -> Result<(), RealtimeError> {
-    if value > maximum {
-        Err(RealtimeError::InvalidConfiguration {
-            field,
-            reason: "exceeds the hard safety maximum",
-        })
-    } else {
-        Ok(())
-    }
-}
-
-fn aggregate_budget(
-    item_bytes: usize,
-    capacity: usize,
-    maximum: usize,
-    field: &'static str,
-    reason: &'static str,
-) -> Result<(), RealtimeError> {
-    let total = item_bytes
-        .checked_mul(capacity)
-        .ok_or(RealtimeError::InvalidConfiguration {
-            field,
-            reason: "aggregate byte calculation overflowed",
-        })?;
-    if total > maximum {
-        Err(RealtimeError::InvalidConfiguration { field, reason })
-    } else {
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -270,10 +243,24 @@ mod tests {
     }
 
     #[test]
+    fn unlimited_transport_sentinel_is_rejected() {
+        assert!(matches!(
+            RealtimeConfig::default()
+                .max_frame_bytes(usize::MAX)
+                .validate(),
+            Err(RealtimeError::InvalidConfiguration {
+                field: "max_frame_bytes",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn every_zero_resource_limit_is_rejected() {
         let invalid = [
             RealtimeConfig::default().max_frame_bytes(0),
             RealtimeConfig::default().max_messages_per_frame(0),
+            RealtimeConfig::default().max_collection_entries(0),
             RealtimeConfig::default().max_pending_requests(0),
             RealtimeConfig::default().command_capacity(0),
             RealtimeConfig::default().event_capacity(0),
@@ -284,6 +271,12 @@ mod tests {
     #[test]
     fn zero_timeouts_are_rejected() {
         let zero = Duration::ZERO;
+        assert!(
+            RealtimeConfig::default()
+                .write_timeout(zero)
+                .validate()
+                .is_err()
+        );
         assert!(
             RealtimeConfig::default()
                 .request_timeout(zero)
@@ -299,41 +292,30 @@ mod tests {
     }
 
     #[test]
-    fn oversized_resource_requests_are_rejected() {
-        let invalid = [
-            RealtimeConfig::default().max_frame_bytes(MAX_FRAME_BYTES + 1),
-            RealtimeConfig::default().max_messages_per_frame(MAX_MESSAGES_PER_FRAME + 1),
-            RealtimeConfig::default().max_pending_requests(MAX_PENDING_REQUESTS + 1),
-            RealtimeConfig::default().command_capacity(MAX_CHANNEL_CAPACITY + 1),
-            RealtimeConfig::default().event_capacity(MAX_CHANNEL_CAPACITY + 1),
-        ];
-        assert!(invalid.into_iter().all(|config| config.validate().is_err()));
-    }
-
-    #[test]
-    fn timeouts_above_one_day_are_rejected() {
-        let oversized = MAX_TIMEOUT + Duration::from_nanos(1);
+    fn unrepresentable_capacities_are_rejected() {
         assert!(
             RealtimeConfig::default()
-                .request_timeout(oversized)
+                .command_capacity(usize::MAX)
                 .validate()
                 .is_err()
         );
         assert!(
             RealtimeConfig::default()
-                .liveness_timeout(oversized)
+                .event_capacity(usize::MAX)
                 .validate()
                 .is_err()
         );
-    }
-
-    #[test]
-    fn aggregate_buffer_budgets_reject_individually_valid_cross_products() {
-        let invalid = [
-            RealtimeConfig::default().command_capacity(DEFAULT_COMMAND_CAPACITY + 1),
-            RealtimeConfig::default().event_capacity(DEFAULT_EVENT_CAPACITY + 1),
-            RealtimeConfig::default().max_pending_requests(DEFAULT_MAX_PENDING_REQUESTS + 1),
-        ];
-        assert!(invalid.into_iter().all(|config| config.validate().is_err()));
+        assert!(
+            RealtimeConfig::default()
+                .max_pending_requests(usize::MAX)
+                .validate()
+                .is_err()
+        );
+        assert!(
+            RealtimeConfig::default()
+                .request_timeout(Duration::MAX)
+                .validate()
+                .is_err()
+        );
     }
 }

@@ -14,7 +14,7 @@ mod request;
 
 use serde::Deserialize;
 
-use super::{RealtimeConnection, RealtimeError};
+use super::{RealtimeError, RealtimeSession};
 
 pub use data::{
     Bar, BarPacket, ChartEvent, ChartPacket, ChartSubscriptionId, HistoricalChartId,
@@ -53,7 +53,7 @@ struct WireSubscription {
     realtime_id: i64,
 }
 
-impl RealtimeConnection {
+impl RealtimeSession {
     /// Requests historical plus realtime chart streams.
     ///
     /// The caller owns the returned IDs and must explicitly cancel the
@@ -79,8 +79,8 @@ impl RealtimeConnection {
             }
         })?;
         Ok(ChartSubscription {
-            historical_id: HistoricalChartId::from_wire(wire.historical_id)?,
-            realtime_id: RealtimeChartId::from_wire(wire.realtime_id)?,
+            historical_id: HistoricalChartId::from_wire(wire.historical_id, self.connection_id())?,
+            realtime_id: RealtimeChartId::from_wire(wire.realtime_id, self.connection_id())?,
         })
     }
 
@@ -93,9 +93,15 @@ impl RealtimeConnection {
     /// # Errors
     ///
     /// Returns a socket-kind, encoding, capacity, provider, timeout, protocol,
-    /// or disconnect failure.
+    /// or disconnect failure. Returns [`RealtimeError::StaleGeneration`] without
+    /// enqueueing when the ID belongs to another socket or this session has ended.
     pub async fn cancel_chart(&self, id: RealtimeChartId) -> Result<(), RealtimeError> {
         self.require_market_data_socket()?;
+        if id.connection_id() != self.connection_id() {
+            return Err(RealtimeError::StaleGeneration {
+                connection_id: id.connection_id(),
+            });
+        }
         let body = serde_json::to_string(&CancelChart {
             subscription_id: id.get(),
         })

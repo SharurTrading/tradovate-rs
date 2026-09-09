@@ -12,7 +12,7 @@ pub(super) mod decode;
 
 use serde::Serialize;
 
-use super::{RealtimeConnection, RealtimeError, SocketKind};
+use super::{RealtimeError, RealtimeSession, SocketKind};
 use crate::{ContractId, Symbol};
 
 pub use data::{
@@ -84,7 +84,7 @@ struct TargetRequest<'a> {
     symbol: WireTarget<'a>,
 }
 
-impl RealtimeConnection {
+impl RealtimeSession {
     /// Subscribes to one market-data family by symbol or contract ID.
     ///
     /// The connection retains no canonical subscription set. Callers keep the
@@ -93,7 +93,7 @@ impl RealtimeConnection {
     /// # Errors
     ///
     /// Returns a socket-kind, encoding, capacity, provider, timeout, protocol,
-    /// or disconnect failure. A request timeout ends the generation.
+    /// or disconnect failure. A timeout leaves the subscription outcome unknown; the socket stays open.
     pub async fn subscribe_market_data<'a>(
         &self,
         channel: MarketDataChannel,
@@ -109,7 +109,7 @@ impl RealtimeConnection {
     /// # Errors
     ///
     /// Returns a socket-kind, encoding, capacity, provider, timeout, protocol,
-    /// or disconnect failure. A request timeout ends the generation.
+    /// or disconnect failure. A timeout leaves the subscription outcome unknown; the socket stays open.
     pub async fn unsubscribe_market_data<'a>(
         &self,
         channel: MarketDataChannel,

@@ -38,7 +38,7 @@ async fn disconnect_drains_every_pending_request() {
 }
 
 #[tokio::test]
-async fn abandoning_an_admitted_request_poisons_the_generation() {
+async fn abandoning_an_admitted_request_preserves_the_generation() {
     let (listener, url) = bind().await;
     let (admitted, request_admitted) = oneshot::channel();
     let (release, server_released) = oneshot::channel();
@@ -51,7 +51,7 @@ async fn abandoning_an_admitted_request_poisons_the_generation() {
         drop(socket);
     });
     let client = authenticated_client(&url, "access", None);
-    let mut connection = connect(&client, SocketKind::User, RealtimeConfig::default()).await;
+    let connection = connect(&client, SocketKind::User, RealtimeConfig::default()).await;
     let mut request = Box::pin(connection.request_non_mutating("contract/item", "", "{}"));
 
     let admission = time::timeout(Duration::from_secs(1), async {
@@ -64,20 +64,9 @@ async fn abandoning_an_admitted_request_poisons_the_generation() {
     assert!(matches!(admission, Ok(Ok(()))));
     drop(request);
 
-    assert!(matches!(
-        await_terminal_state(&mut connection).await,
-        RealtimeState::ResyncRequired {
-            reason: ResyncReason::RequestAbandoned,
-            ..
-        }
-    ));
-    assert!(matches!(
-        connection.shutdown().await,
-        Err(RealtimeError::ResyncRequired {
-            reason: ResyncReason::RequestAbandoned,
-            ..
-        })
-    ));
+    tokio::task::yield_now().await;
+    assert!(matches!(connection.state(), RealtimeState::Ready { .. }));
+    assert!(connection.shutdown().await.is_ok());
     assert!(release.send(()).is_ok());
     join(server).await;
 }

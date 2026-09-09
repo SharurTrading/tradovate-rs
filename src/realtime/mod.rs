@@ -9,14 +9,17 @@
 //! [`DOCUMENTATION_BLOCKED_CAPABILITIES`] for that explicit boundary.
 
 mod actor;
+mod admission;
 mod bounded;
 mod chart;
 mod codec;
 mod config;
 mod connection;
+mod delivery;
 mod error;
 mod event;
 mod market_data;
+mod session;
 mod types;
 mod user_stream;
 mod user_sync;
@@ -30,6 +33,7 @@ pub use codec::{Error as CodecError, RequestId};
 pub(crate) use codec::{Event, FrameCodec, Response, ServerFrame, ServerMessage};
 pub use config::RealtimeConfig;
 pub use connection::RealtimeConnection;
+pub use delivery::ContinuityGap;
 pub use error::{RealtimeError, RealtimeEventKind, RealtimePayloadError};
 pub use event::{
     DOCUMENTATION_BLOCKED_CAPABILITIES, DocumentationBlockedCapability, DocumentationBlockedEvent,
@@ -39,6 +43,7 @@ pub use market_data::{
     DepthLevel, DepthOfMarket, Histogram, MarketDataChannel, MarketDataEvent, MarketDataTarget,
     Quote, QuoteEntry, QuoteEntryKind, TradeDate,
 };
+pub use session::RealtimeSession;
 pub use types::{
     ConnectionId, DisconnectReason, RealtimeEvent, RealtimeState, ResyncReason, SocketKind,
 };

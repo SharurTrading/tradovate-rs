@@ -226,33 +226,46 @@ provider `p-time`.
 
 ### Realtime execution
 
-The production realtime transport does not consider a connection ready
-until authentication and protocol negotiation succeed. Frames have both byte and
-message-count ceilings; queue and pending-reply capacities also obey aggregate byte
-budgets. Each connection is exactly one immutable generation; the transport does not
-automatically reconnect it.
+The connection becomes ready after authorization and, for a user socket, its validated
+bootstrap. Each `RealtimeConnection` owns one immutable socket generation. Replacement
+connections remain caller-owned; there is no library reconnect or backoff task to
+outlive an explicit shutdown or cancelled connection attempt.
 
-The transport deliberately owns no canonical subscription or account projection.
-An unexpected termination after readiness publishes
-`ResyncRequired(ConnectionLost)`; event overflow publishes
-`ResyncRequired(EventBufferOverflow)`. Abandoning an admitted request publishes
-`ResyncRequired(RequestAbandoned)` because its outcome can no longer be observed.
-Only caller-requested graceful shutdown is an ordinary `Closed` state. Callers then
-create a new connection, replay their idempotent subscription set, and obtain a fresh
-snapshot/reconciliation before accepting new deltas. The crate currently emits no
-replay instruction and has no recovery-fence acknowledgement API.
+Capture `connection.session()` **before dispatching concurrent subscription work**.
+The cloneable `RealtimeSession` can run while the owner drains events. It cannot
+reconnect, acknowledge recovery, or keep the connection owner alive. Chart IDs also
+carry their allocating generation; stale operations fail before enqueueing.
 
-Tradovate realtime sockets use SockJS-derived server frames and exact four-field
-client requests. The client heartbeat is the text frame `[]` on an independent
-2.5-second monotonic schedule. Every non-shutdown post-readiness writer operation is
-fenced by the next heartbeat deadline; a backpressured writer invalidates the
-generation instead of remaining ready after a missed heartbeat. A user-data socket
-performs exactly one `user/syncrequest` per authenticated connection generation
-before its snapshot-plus-delta stream is ready. Bounded messages received during authorization
-and in the same frame as user sync are staged; the validated bootstrap is always
-delivered before those deltas and before readiness is published. A validated penalty
-installs the full monotonic cooldown and ends setup with a typed error; the foundation
-does not retry user synchronization automatically.
+`recv_event()` preserves accepted data, then a retained `ContinuityGap` when an
+application record is malformed, unsupported, or cannot fit the event queue. The
+socket keeps processing replies and keepalives while data delivery is fenced. Install
+snapshot/reconciliation recovery, then call `acknowledge_continuity_gap(gap)` with the
+exact delivered marker. Delivery resumes on the same socket; pre-boundary buffered
+records cannot reenter it. A gap alone does not prove subscriptions ended.
+
+Cancellation atomically prevents queued work from starting when possible. Once a
+request starts, timeout returns `RequestOutcomeUncertain`; cancellation has the same
+unknown outcome. Neither closes the socket or retries the operation. Keep uncertain
+subscription ownership until authoritative evidence resolves it or its actual socket
+producers stop. `UnmatchedResponse` is metadata, not proof of business success.
+REST mutations retain their separate reconciliation latch and are never retried.
+
+Actual transport loss or remote closure ends the generation. The ordered event tail
+contains `GenerationEnded` with the original error after both socket halves stop.
+`state()` / `state_changed()` remain latest-state views; use `recv_event()` for ordered
+boundaries. `shutdown()` cancels and waits for tracked teardown; cancellation of that
+wait does not cancel cleanup. `session.wait_ended()` proves actual task termination.
+Dropping the owner outside Tokio is safe; its original runtime must run to complete
+async cleanup. No runtime is created by the library.
+
+Tradovate uses SockJS-derived frames and the text heartbeat `[]` every 2.5 seconds.
+An idle interval starts a WebSocket ping; only failure to receive its matching pong
+before the probe deadline fails liveness. Ordinary market silence does not close the
+socket. Request refusal is reported as its original typed provider error. Socket write
+timeouts are independent of caller request deadlines and the heartbeat tick.
+A user socket sends exactly one `user/syncrequest`; failed establishment and bootstrap
+penalties still end setup without retrying synchronization.
+
 The default user-sync profile explicitly requests all 31 entity families in the
 pinned current `SyncMessage` schema with `splitResponses: false`. A validated
 `UserSyncConfig` also supports the documented user/account filters, cutoff timestamp,
@@ -263,10 +276,43 @@ before readiness. Only B2B multipart completion remains documentation blocked.
 Public events contain no raw JSON values: known user entities and the documented
 `OtherEnvAdminAlertSignal` signature event reuse current typed REST models; quotes,
 DOM, histograms, bars, and ticks cross the boundary as exact `Decimal` values.
-Malformed, partial, oversized, or semantically unknown payloads end the generation
-rather than publishing partial truth. The complete public surface and its explicit
+Malformed or semantically unsupported application payloads retain a continuity gap.
+Failed bootstrap and transport framing/resource failures still end establishment or
+the affected transport. The complete public surface and its explicit
 documentation boundaries are recorded in
 [`docs/api-coverage-realtime.md`](docs/api-coverage-realtime.md).
+
+### Realtime capacity and migration from 0.1
+
+Version 0.2 changes the recovery contract. A consumer must handle and acknowledge
+nonterminal gaps while connected, retain uncertain subscription ownership, and treat
+`GenerationEnded` as separate evidence. Existing serial subscription methods remain;
+use `RealtimeSession` for concurrency. Chart IDs cannot be applied to another socket.
+The obsolete `DisconnectReason::RequestTimeout` variant is removed; request expiry
+is reported by the individual invocation and does not end the socket.
+
+`RealtimeConfig` validates positive, representable controls independently. Defaults:
+
+| Control | Default | Saturation behavior |
+| --- | --- | --- |
+| Command queue | 4,096 | Async admission waits until the request deadline; queued cancellation can prove not sent. |
+| Outstanding replies | 4,096 | New requests fail locally with `PendingLimitReached`. Completed subscriptions consume no slots. |
+| Event queue | 65,536 | Retain the accepted prefix and a nonterminal gap; keep replies and heartbeat processing available. |
+| Frame bytes | 8 MiB | Caller-selected transport resource bound; an exceeded WebSocket framing limit ends that transport. |
+| Records per frame | 65,536 | Caller-selected decode bound; excess records cause a gap. |
+| Entries per decoded collection | 65,536 | Caller-selected decode bound; excess application data causes a gap. |
+| Request / socket write / idle probe wait | 10 seconds each | Separate request uncertainty, transport-write failure, and active-probe failure. |
+
+Payload and collection defaults are client memory controls, not claimed provider
+limits. They can be raised explicitly for the workload. Queue configuration no longer
+multiplies the largest possible payload into a speculative aggregate memory charge.
+Actual memory depends on queued payload sizes and decoded collection contents; size
+queues for consumer delay and the largest expected frame. Keep finite limits for
+untrusted endpoints. There is no total active-subscription cap. The documented shared
+provider rate budgets and penalty cooldowns remain unchanged.
+
+See [the lifecycle audit and migration decision](docs/adr/0002-realtime-continuity.md)
+for termination sites, provider evidence, and deterministic stress coverage.
 
 ## Official protocol references
 
