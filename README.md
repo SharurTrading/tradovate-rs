@@ -358,6 +358,11 @@ stale. Never hand-edit files under `src/api/current/generated/`.
 
 The secret scan requires Git history and is authoritative in CI.
 
+The unanswered-ping burst regression uses Tokio's development-only test clock.
+It advances deadlines after observed batch delivery, keeping real TCP delays
+outside the liveness clock while requiring an unanswered probe to fail despite
+repeated batches.
+
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for test, file-size, security, and pull
 request requirements.
 

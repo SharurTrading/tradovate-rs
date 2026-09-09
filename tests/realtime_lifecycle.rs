@@ -306,49 +306,63 @@ async fn continuous_batches_cannot_renew_an_unanswered_probe_forever() {
     use tokio_tungstenite::tungstenite::Message;
     use tradovate_client::realtime::RealtimeError;
     let (client, listener) = fixture().await;
-    let (release, mut wait) = tokio::sync::oneshot::channel();
-    let server = tokio::spawn(async move {
-        let mut socket = accept(&listener).await;
-        authorize(&mut socket).await;
+    let config = RealtimeConfig::default().liveness_timeout(Duration::from_millis(40));
+    // Keep real TCP latency outside the liveness clock. In particular, delayed
+    // ACKs must not consume the entire probe window before a second batch arrives.
+    tokio::time::pause();
+    let (connection, records, result) = with_manual_clock(async {
+        let (mut connection, mut socket) = tokio::join!(connect(&client, config), async {
+            let mut socket = accept(&listener).await;
+            authorize(&mut socket).await;
+            socket
+        });
+        // Cross the idle deadline, including Tokio's millisecond timer rounding.
+        tokio::time::advance(Duration::from_millis(41)).await;
         assert!(matches!(socket.next().await, Some(Ok(Message::Ping(_)))));
         let payload = br#"a[{"e":"chart","d":{"charts":[{"id":9,"eoh":true}]}}]"#;
         let mut frame = vec![0x81, u8::try_from(payload.len()).unwrap_or_default()];
         frame.extend_from_slice(payload);
-        let mut interval = tokio::time::interval(Duration::from_millis(2));
-        loop {
-            tokio::select! {
-                _ = &mut wait => break,
-                _ = interval.tick() => {
-                    // Write valid unmasked server frames directly so tungstenite's
-                    // queued automatic Pong stays unsent throughout the fixture.
-                    if socket.get_mut().write_all(&frame).await.is_err() { break; }
-                }
-            }
-        }
-    });
-    let mut connection = connect(
-        &client,
-        RealtimeConfig::default().liveness_timeout(Duration::from_millis(40)),
-    )
-    .await;
-    let result = tokio::time::timeout(Duration::from_millis(300), async {
-        let mut records = 0;
-        loop {
+        for records in 0..10 {
+            // Bypass tungstenite so its queued automatic Pong stays unsent.
+            // A terminal actor may already have closed TCP at this step.
+            let sent = socket.get_mut().write_all(&frame).await;
             match event(&mut connection).await.into_payload() {
-                RealtimeEventPayload::Chart(_) => records += 1,
-                RealtimeEventPayload::GenerationEnded(result) => break (records, result),
+                RealtimeEventPayload::Chart(_) => assert!(sent.is_ok(), "{sent:?}"),
+                RealtimeEventPayload::GenerationEnded(result) => {
+                    return (connection, records, result);
+                }
                 other => panic!("unexpected event: {other:?}"),
             }
+            // Each accepted batch precedes the next clock step. More than two
+            // full probe windows cannot be sustained by renewing read grace.
+            tokio::time::advance(Duration::from_millis(10)).await;
         }
+        panic!("ten batches renewed an unanswered probe beyond its deadline");
     })
     .await;
-    let _released = release.send(());
-    assert!(server.await.is_ok());
-    assert!(matches!(result, Ok((records, Err(RealtimeError::LivenessTimeout))) if records >= 2));
+    tokio::time::resume();
+    assert!(records >= 2, "only {records} batches exercised read grace");
+    assert_eq!(result, Err(RealtimeError::LivenessTimeout));
     assert_eq!(
         connection.shutdown().await,
         Err(RealtimeError::LivenessTimeout)
     );
+}
+
+// A paused Tokio clock normally jumps to the next timer when TCP is pending.
+// Keep the current-thread runtime runnable so only explicit advance calls move
+// time, with a separate real-time watchdog for fixture failures. No task is spawned.
+async fn with_manual_clock<T>(operation: impl std::future::Future<Output = T>) -> T {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    tokio::pin!(operation);
+    loop {
+        assert!(std::time::Instant::now() < deadline, "fixture I/O stalled");
+        tokio::select! {
+            biased;
+            result = &mut operation => return result,
+            () = tokio::task::yield_now() => {},
+        }
+    }
 }
 
 #[tokio::test]
