@@ -87,6 +87,14 @@ impl Actor {
             }
             None => {
                 self.batch = None;
+                // The reader was deliberately parked while decoding this bounded
+                // message. Buffered work is not evidence of silence, and a pong
+                // behind it must receive a full read opportunity before expiry.
+                let now = Instant::now();
+                self.last_received = now;
+                if let Some((_, deadline)) = &mut self.probe {
+                    *deadline = now + self.config.liveness_deadline();
+                }
             }
         }
     }

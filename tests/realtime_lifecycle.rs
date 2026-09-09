@@ -12,7 +12,7 @@ use tradovate_client::realtime::{MarketDataChannel, RealtimeConfig, RealtimeEven
 
 const EVENTS: usize = 20_000;
 
-async fn burst(active_consumer: bool) {
+async fn burst(active_consumer: bool, liveness: std::time::Duration) {
     let (client, listener) = fixture().await;
     let (sent, received) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
@@ -29,8 +29,9 @@ async fn burst(active_consumer: bool) {
         assert!(sent.send(()).is_ok());
         closed(&mut socket).await;
     });
-    let config =
-        RealtimeConfig::default().event_capacity(if active_consumer { 64 } else { EVENTS });
+    let config = RealtimeConfig::default()
+        .event_capacity(if active_consumer { 64 } else { EVENTS })
+        .liveness_timeout(liveness);
     let mut connection = connect(&client, config).await;
     let generation = connection.connection_id();
     let session = connection.session();
@@ -87,12 +88,17 @@ async fn burst(active_consumer: bool) {
 
 #[tokio::test]
 async fn twenty_thousand_events_with_a_paused_consumer() {
-    burst(false).await;
+    burst(false, std::time::Duration::from_secs(10)).await;
 }
 
 #[tokio::test]
 async fn twenty_thousand_events_through_a_sixty_four_event_queue() {
-    burst(true).await;
+    burst(true, std::time::Duration::from_secs(10)).await;
+}
+
+#[tokio::test]
+async fn buffered_burst_does_not_manufacture_a_failed_probe() {
+    burst(true, std::time::Duration::from_millis(10)).await;
 }
 
 #[tokio::test]

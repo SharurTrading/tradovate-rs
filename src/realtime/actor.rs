@@ -219,7 +219,7 @@ impl Actor {
                 () = self.cancellation.cancelled() => Wake::Shutdown,
                 () = self.request_abandoned.notified() => Wake::Abandoned,
                 () = wait_for_deadline(pending_deadline) => Wake::Deadline,
-                () = time::sleep_until(liveness_deadline) => Wake::Probe,
+                () = time::sleep_until(liveness_deadline), if self.batch.is_none() => Wake::Probe,
                 _ = self.heartbeat.tick() => Wake::Heartbeat,
                 wake = async {
                     tokio::select! {

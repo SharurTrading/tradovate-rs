@@ -30,6 +30,7 @@ This project is pre-release. No release entries have been published.
   uniqueness, cross-field validation, and the configured outbound byte limit.
 - Yield between coalesced records and index pending deadlines. Keep Tradovate's 2.5-second
   heartbeat, use active ping/pong liveness, and separate socket-write/request deadlines.
+  Buffered decoding cannot expire a pong that the reader has not had a chance to observe.
 
 See README migration guidance and ADR 0002. This pre-1.0 minor version denotes the
 changed public recovery contract. `publish = false` remains; no tag or registry release.

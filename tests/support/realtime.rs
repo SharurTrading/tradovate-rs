@@ -102,6 +102,12 @@ pub async fn closed(socket: &mut Socket) {
         match timeout(Duration::from_secs(5), socket.next()).await {
             Ok(Some(Ok(Message::Close(_))) | None) => return,
             Ok(Some(Ok(Message::Text(text)))) if text == "[]" => {}
+            Ok(Some(Ok(Message::Ping(data)))) => {
+                socket
+                    .send(Message::Pong(data))
+                    .await
+                    .unwrap_or_else(|e| panic!("pong: {e}"));
+            }
             other => panic!("expected close: {other:?}"),
         }
     }

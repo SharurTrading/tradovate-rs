@@ -100,7 +100,8 @@ impl RealtimeConfig {
 
     /// Sets the idle interval before an active WebSocket ping and its pong wait.
     /// Silence alone never terminates the socket. Only a missing matching pong
-    /// after a transmitted probe fails liveness.
+    /// after a transmitted probe fails liveness. Processing an already-buffered
+    /// message pauses this read deadline; outgoing heartbeats remain independent.
     pub const fn liveness_timeout(mut self, timeout: Duration) -> Self {
         self.liveness_timeout = timeout;
         self
