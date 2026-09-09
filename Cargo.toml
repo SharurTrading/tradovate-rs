@@ -16,7 +16,7 @@ futures-util = "0.3.33"
 jiff = { version = "0.2.35", features = ["serde", "std"] }
 parking_lot = "0.12.5"
 reqwest = { version = "0.13.4", default-features = false, features = ["query", "rustls", "stream"] }
-rust_decimal = { version = "1.42.1", default-features = false, features = ["std"] }
+rust_decimal = { version = "1.43.0", default-features = false, features = ["std"] }
 secrecy = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["raw_value"] }

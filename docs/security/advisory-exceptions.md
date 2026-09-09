@@ -5,26 +5,37 @@ SPDX-License-Identifier: MIT-0
 
 # Advisory exceptions
 
-Every entry is a narrow lockfile-scanner exception, not acceptance of an active
-vulnerability. CI must independently prove that the affected package is absent from
-the compiled dependency graph under every crate feature.
+Any active exception must be limited to a lockfile-scanner false positive, never
+an active vulnerability. CI must independently prove that the affected package is
+absent from the compiled dependency graph under every crate feature.
 
-## RUSTSEC-2026-0235 — `rkyv` 0.7
+There are no active exceptions. CI runs `cargo audit` without advisory ignores.
+
+## Retired: RUSTSEC-2026-0235 — `rkyv` 0.7
+
+Retired on 2026-09-09 after upgrading to `rust_decimal` 1.43.0. Upstream removed
+its optional `rkyv` 0.7 feature bridge, and the package is absent from the updated
+lockfile. The removal condition below is satisfied; both the audit ignore and
+its associated feature-graph guard have been removed. The historical evidence
+is retained for auditability.
+
+Source: [upstream 1.43.0 release](https://github.com/paupino/rust-decimal/releases/tag/1.43.0),
+reviewed 2026-09-09.
 
 - Reviewed: 2026-08-21.
 - Advisory: <https://rustsec.org/advisories/RUSTSEC-2026-0235.html>.
-- Lockfile path: the optional `rust_decimal` 1.42.1 `rkyv` feature records `rkyv`
+- Former lockfile path: the optional `rust_decimal` 1.42.1 `rkyv` feature records `rkyv`
   0.7.46 in `Cargo.lock` even though the feature is not enabled.
-- Runtime/build exposure: none. `rust_decimal` has default features disabled and
+- Historical runtime/build exposure: none. `rust_decimal` has default features disabled and
   enables only `std`. The repository defines no feature that enables
   `rust_decimal/rkyv` or `rust_decimal/rkyv-safe`.
-- Enforced evidence: CI runs `cargo tree --locked --all-features --edges
-  normal,build,dev --prefix none` and fails if any `rkyv` 0.7 package is active
+- Former enforced evidence: CI ran `cargo tree --locked --all-features --edges
+  normal,build,dev --prefix none` and failed if any `rkyv` 0.7 package is active
   before passing this advisory ID to `cargo audit --ignore`.
 - Removal condition: remove the exception as soon as `rust_decimal` no longer
   resolves vulnerable `rkyv` into the lockfile, `cargo audit` becomes
   feature-graph-aware, or any crate feature activates `rkyv` (the last condition
   must fail CI rather than extending this exception).
 
-Upstream documents that its `rkyv` feature is optional and intentionally pinned to
-0.7 for compatibility: <https://github.com/paupino/rust-decimal#rkyv>.
+The former optional compatibility feature is documented in the pinned
+[1.42.1 README](https://github.com/paupino/rust-decimal/blob/1.42.1/README.md#rkyv).

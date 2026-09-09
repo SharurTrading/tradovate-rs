@@ -347,8 +347,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --locked
 cargo nextest run --all-features --locked --no-fail-fast
 cargo test --doc --all-features --locked
 cargo deny --locked check
-cargo tree --locked --all-features --edges normal,build,dev --prefix none | grep --extended-regexp '^rkyv v0\.7\.' && exit 1 || true
-cargo audit --file Cargo.lock --deny warnings --ignore RUSTSEC-2026-0235
+cargo audit --file Cargo.lock --deny warnings
 gitleaks git --no-banner --redact --log-opts="--all" .
 ```
 
