@@ -34,6 +34,19 @@ reviews:
     - "!docs/api-coverage-rest.md"
 
   path_instructions:
+    - path: "**/*"
+      instructions: |
+        Enforce TV-FOLLOWUP-01 as BLOCKER across the PR description, commit messages,
+        review replies, and changed files. Every named follow-up must be completed
+        in this change or tracked by a GitHub issue before merge, with its issue
+        number or link cited at every mention of the deferred work. Check source
+        comments, coverage ledgers, plans, and research notes, including gaps found
+        in adjacent work, exhausted investigation paths, and deferred reviewer
+        questions. A promise of later work, a separate PR, or work outside the
+        current scope is not tracking. Require the author to complete the work or
+        supply the issue reference; do not invent issue numbers. An issue does not
+        waive required fixes, tests, or documentation in the current change.
+
     - path: "**/*.rs"
       instructions: |
         Apply the TV-* rules in AGENTS.md and cite the exact rule for every finding.
