@@ -4,11 +4,11 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 #
 # CodeRabbit cloud-review policy for tradovate-rs. AGENTS.md is the repository
-# contract; these path instructions are a high-signal index into its TV-* rules.
+# complete review contract; path instructions supplement it without limiting it.
 
 language: "en-US"
 
-tone_instructions: "Cite the exact AGENTS.md TV-* rule ID for every finding. Use the repository BLOCKER/MAJOR/MINOR/NIT severities, keep findings concrete and actionable, and treat preferences already enforced by rustfmt or strict Clippy as nits or omit them."
+tone_instructions: "Apply all applicable AGENTS.md rules. Cite the exact TV-* ID or unnumbered section for each finding, use its BLOCKER/MAJOR/MINOR/NIT severities and review format, and keep findings concrete and actionable. Omit rustfmt and strict-Clippy noise."
 
 reviews:
   profile: "assertive"
@@ -26,16 +26,40 @@ reviews:
 
   path_filters:
     - "!target/**"
-    - "!Cargo.lock"
-    # Third-party pinned input and deterministic generated output are reviewed
-    # through provenance/hash checks and the generator rather than noisy line review.
-    - "!spec/official/**"
-    - "!src/api/current/generated/**"
-    - "!docs/api-coverage-rest.md"
+    # Include contract and supply-chain artifacts, overriding default exclusions
+    # for lockfiles and generated code. Review them through their owning policies.
+    - "Cargo.lock"
+    - "spec/official/**"
+    - "src/api/current/generated/**"
+    - "docs/api-coverage-rest.md"
 
   path_instructions:
     - path: "**/*"
       instructions: |
+        Read the entire root AGENTS.md and apply every requirement relevant to the
+        change. It is the authoritative repository contract, including its mission
+        and boundary, priority and severity rules, all TV-* non-negotiables, locked
+        architecture and patterns, Rust API standards, realtime lifecycle, banned
+        antipatterns, size limits, validation, documentation/change discipline,
+        follow-up tracking, review output, and release gates when applicable.
+        These path instructions are supplementary examples, not an exhaustive
+        checklist or exceptions. An omitted rule still applies. Resolve conflicts
+        with path instructions or learned preferences using AGENTS.md's priority
+        order and severity definitions.
+        Review the changed files and relevant surrounding code together with PR
+        descriptions, commit messages, review replies, and validation evidence.
+        Check required companion tests and documentation in the same change.
+        Cite the exact TV-* rule ID, or the section for an unnumbered requirement,
+        and give the location, What, Why, and Fix for each actionable finding.
+        End the review with exactly one AGENTS.md verdict: REVIEW: REQUEST_CHANGES
+        with a reason if any BLOCKER or MAJOR remains, otherwise REVIEW: PASS with
+        a summary. Do not claim an unverified gate or provider behavior passed.
+        For pinned third-party inputs and generated artifacts, apply TV-CURRENT-01
+        and TV-LICENSE-01 through provenance, hash, semantic/safety/drift review,
+        and byte-for-byte generator-check evidence. Never request hand-edits to
+        generated output. Review Cargo.lock changes under TV-SUPPLY-01 alongside
+        manifests, feature graphs, and dependency/advisory/license check evidence.
+
         Enforce TV-FOLLOWUP-01 as BLOCKER across the PR description, commit messages,
         review replies, and changed files. Every named follow-up must be completed
         in this change or tracked by a GitHub issue before merge, with its issue
@@ -49,7 +73,7 @@ reviews:
 
     - path: "**/*.rs"
       instructions: |
-        Apply the TV-* rules in AGENTS.md and cite the exact rule for every finding.
+        Apply the full AGENTS.md contract and cite the exact rule for every finding.
         BLOCKER findings include:
         - f32/f64 or a float round-trip for prices, money, balances, margin, fees,
           commissions, P&L, or exact provider decimal tokens (TV-DECIMAL-01).
@@ -62,16 +86,16 @@ reviews:
           aggregation, or reconnect loops (TV-TRANSPORT-01, TV-PAT-BOUNDS-01).
         - Raw String/integer public identities, implicit account/instrument routing,
           or silent environment mixing (TV-IDENTITY-01, TV-ENVIRONMENT-01).
+        - A hidden/blocking Tokio runtime or consumer-domain coupling
+          (TV-RUNTIME-01, TV-BOUNDARY-01).
         MAJOR findings include:
-        - A lock guard across .await, a hidden/blocking Tokio runtime, an orphaned
-          task, or cancellation without explicit admission/commit handling
-          (TV-PAT-ASYNC-01, TV-PAT-RAII-01, TV-RUNTIME-01).
+        - A lock guard across .await, an orphaned task, or cancellation without
+          explicit admission/commit handling (TV-PAT-ASYNC-01, TV-PAT-RAII-01).
         - unwrap, expect, panic, unchecked indexing, or assertions on expected
           caller/provider input in production code (TV-ANTI-PANIC-01).
         - Public raw JSON/endpoints/command strings, leaked dependency transport
           types, giant capability buckets, or unjustified generic provider traits
-          (TV-ANTI-RAW-01, TV-BOUNDARY-01, TV-ANTI-BUCKET-01,
-          TV-ANTI-ABSTRACT-01).
+          (TV-ANTI-RAW-01, TV-ANTI-BUCKET-01, TV-ANTI-ABSTRACT-01).
         - New unsafe without a reviewed ADR and a minimal safe boundary.
         Public items need rustdoc and # Errors/# Safety sections where applicable
         (TV-DOC-01). Unknown response enum values must remain representable, while
