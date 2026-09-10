@@ -25,6 +25,7 @@ reviews:
       - "^main$"
 
   path_filters:
+    - "**/*"
     - "!target/**"
     # Include contract and supply-chain artifacts, overriding default exclusions
     # for lockfiles and generated code. Review them through their owning policies.
