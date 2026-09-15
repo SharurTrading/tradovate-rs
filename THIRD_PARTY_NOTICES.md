@@ -7,8 +7,7 @@ SPDX-License-Identifier: MIT-0
 
 The MIT-0 license in [`LICENSE`](LICENSE) covers repository-authored source,
 configuration, tests, and documentation. It does not relicense third-party
-materials or trademarks. [`RELICENSING.md`](RELICENSING.md) records the scope of
-the copyright holder's grant for historical repository revisions.
+materials or trademarks.
 
 ## Tradovate Partner OpenAPI
 
