@@ -6,8 +6,10 @@ SPDX-License-Identifier: MIT-0
 # Third-party notices
 
 The MIT-0 license in [`LICENSE`](LICENSE) covers repository-authored source,
-configuration, tests, and documentation. It does not relicense third-party
-materials or trademarks.
+configuration, tests, and documentation. Kevin Monaghan, as copyright holder,
+grants that license for every revision reachable from this repository, superseding
+the former proprietary notices on that material. The license does not relicense
+third-party materials or trademarks.
 
 ## Tradovate Partner OpenAPI
 
