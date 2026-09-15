@@ -389,7 +389,6 @@ approve and document a separate crates.io release policy.
 
 The repository-authored source and documentation are available under the
 [MIT No Attribution License (`MIT-0`)](LICENSE). The pinned Tradovate contract
-snapshot is third-party documentation and is not relicensed; see
-[`RELICENSING.md`](RELICENSING.md),
+snapshot is third-party documentation and is not covered by that license; see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and
 [`spec/README.md`](spec/README.md).

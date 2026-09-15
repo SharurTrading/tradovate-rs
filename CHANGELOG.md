@@ -33,6 +33,15 @@ This project is pre-release. No release entries have been published.
   heartbeat, use active ping/pong liveness, and separate socket-write/request deadlines.
   Buffered decoding cannot expire a pong that the reader has not had a chance to observe.
 
+### Security
+
+- Update `rustls` from 0.23.43 to 0.23.45 to clear the active
+  [RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285) advisory
+  (GHSA-2mjx-qc3c-rqvc): a vulnerable peer could send handshake messages that should
+  use encryption in plaintext. `cargo deny` and `cargo audit` previously failed on
+  every run and now pass without ignores. This lockfile-only change applies to both
+  the REST and realtime TLS stacks and introduces no API change.
+
 ### Dependency and CI maintenance
 
 - Drive the unanswered-ping burst regression with an explicit test clock so real
@@ -42,8 +51,13 @@ This project is pre-release. No release entries have been published.
   and the exact-decimal wire contract ([#10](https://github.com/SharurTrading/tradovate-rs/pull/10)).
 - Retire the inactive `RUSTSEC-2026-0235` exception and its feature-graph guard:
   `rkyv` 0.7 no longer appears in the lockfile. CI now runs `cargo audit` without ignores.
+- Update the locked `reqwest` from 0.13.4 to 0.13.5, retaining the existing
+  manifest constraint and the `default-features = false` set of `query`, `rustls`,
+  and `stream` ([#15](https://github.com/SharurTrading/tradovate-rs/pull/15)).
 - Update the SHA-pinned `taiki-e/install-action` from 2.87.0 to 2.87.4
   ([#9](https://github.com/SharurTrading/tradovate-rs/pull/9)).
+- Update the SHA-pinned `taiki-e/install-action` from 2.87.4 to 2.87.10
+  ([#14](https://github.com/SharurTrading/tradovate-rs/pull/14)).
 
 See README migration guidance and ADR 0002. This pre-1.0 minor version denotes the
 changed public recovery contract. `publish = false` remains; no tag or registry release.
