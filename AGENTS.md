@@ -65,6 +65,7 @@ Review severities:
 | **TV-SUPPLY-01** | Never suppress an active dependency advisory. A lockfile-only false positive may be ignored only with a checked-in evidence record, a CI feature-graph guard proving the package is inactive under all crate features, and an explicit removal condition. |
 | **TV-CURRENT-01** | The REST surface is generated only from the reviewed, hash-pinned current Partner OpenAPI snapshot. The older API explorer and guide-only fragments are evidence of drift, not implementation inputs. Generated files are checked in, never hand-edited, and must reproduce byte-for-byte under `tools/generate_openapi.py --check`; changing the snapshot or hash requires a semantic, safety, and legacy-divergence review. |
 | **TV-FOLLOWUP-01** | Every follow-up identified anywhere in a change, including its PR description, commit messages, review replies, source comments, coverage ledgers, plans, and research notes, must be completed in that change or tracked by a GitHub issue before merge. Cite the issue number or link at every mention of the deferred work. This includes gaps discovered in adjacent work, exhausted investigation paths, and deferred reviewer questions. Promises of later work, a separate PR, or work outside the current scope do not count as tracking. An issue does not waive required fixes, tests, or documentation in the current change. |
+| **TV-ATTRIBUTION-01** | Every GitHub post an AI agent publishes through a maintainer's identity states the exact model name that produced it, in the agent's own words at the top of that post. This covers coding and review agents alike, and every surface: pull request and issue descriptions, comments, review bodies, inline review comments, release notes, and later comments that answer review feedback. |
 
 ## Locked architecture
 
@@ -255,6 +256,47 @@ End reviews with exactly one verdict:
 
 - `REVIEW: REQUEST_CHANGES — <reason>` when any BLOCKER or MAJOR exists.
 - `REVIEW: PASS — <summary>` when only MINOR/NIT findings remain or none exist.
+
+## AI agent attribution
+
+`TV-ATTRIBUTION-01` is a non-negotiable, and it applies to every agent here, whether
+it is changing code or reviewing a change. An agent acts through the maintainer's
+GitHub account: the post carries the maintainer's name while the words are the
+model's. Readers must be able to see which model spoke.
+
+Every agent-published GitHub surface therefore opens with the model's own disclosure
+line, before any finding, summary, checklist, or verdict:
+
+```text
+AI-Agent: <exact model name>
+```
+
+- Name the exact routing identity: the model identifier, plus the harness when the
+  harness distinguishes routes. `an AI assistant`, `a language model`, a vendor
+  family, and a product persona are not model names. Never invent, embellish, or
+  round a version.
+- Disclose in the agent's own words. A signature, trailer, or badge that the hosting
+  platform adds to everything is not the agent stating its model.
+- Write it in every surface the agent publishes: pull request and issue descriptions,
+  pull request and issue comments, review bodies, each inline review comment, release
+  notes, and any later comment that answers review feedback.
+- Each inline review comment needs its own line. Review UIs surface them as standalone
+  comments, so a disclosure in the review body does not cover them.
+- Re-post or edit a surface and the line stays accurate and current. If work moves to
+  a different model, the new post names the new model.
+- Stay truthful and current. A model cannot verify its own routing identity with
+  certainty, so the maintainer may correct the line; the correction must be applied
+  rather than argued.
+- This governs agent posts only. The maintainer's own posts carry no such line, and an
+  agent must not add one to a human post or remove one the maintainer wrote.
+- An agent that publishes any surface without its model disclosed violates this rule.
+  That is a governance BLOCKER under the severity definitions above, not a NIT. A
+  reviewer that notices a missing line cites `TV-ATTRIBUTION-01` with the offending
+  surface and requires the disclosure before merge. An agent that sees its own surface
+  missing the line fixes it immediately instead of waiting for review.
+
+Commit messages, branches, and source comments are not posts; they are covered by the
+ownership and follow-up rules that already apply to them.
 
 ## Release gate
 
