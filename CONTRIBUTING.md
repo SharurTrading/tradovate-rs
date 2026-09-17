@@ -99,6 +99,22 @@ Use synthetic values in fixtures and redact logs before attaching them. Report a
 suspected leak or vulnerability through the process in [`SECURITY.md`](SECURITY.md),
 not a normal issue.
 
+## AI agent posts
+
+An AI agent that posts here does so through a maintainer's GitHub account. Every
+surface it publishes — pull request and issue descriptions, comments, review bodies,
+inline review comments, release notes, and later comments that answer review
+feedback — opens with the model's own disclosure line:
+
+```text
+AI-Agent: <exact model name>
+```
+
+Name the precise routing identity, not a vendor family or persona. This applies
+equally to agents that change code and agents that review it; [`AGENTS.md`](AGENTS.md)
+carries the complete `TV-ATTRIBUTION-01` rule, including one disclosure line per
+inline review comment. The maintainer's own posts carry no such line.
+
 ## Dependency changes
 
 - Prefer no new dependency when a small, readable implementation is sufficient.
