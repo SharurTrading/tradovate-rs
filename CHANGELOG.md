@@ -58,6 +58,14 @@ This project is pre-release. No release entries have been published.
   ([#9](https://github.com/SharurTrading/tradovate-rs/pull/9)).
 - Update the SHA-pinned `taiki-e/install-action` from 2.87.4 to 2.87.10
   ([#14](https://github.com/SharurTrading/tradovate-rs/pull/14)).
+- Update the SHA-pinned `taiki-e/install-action` from 2.87.10 to 2.87.14
+  ([#18](https://github.com/SharurTrading/tradovate-rs/pull/18)).
+- Update the SHA-pinned `dtolnay/rust-toolchain` action from `6c977a6` to `02cb101`
+  on its tracked `master` ref
+  ([#19](https://github.com/SharurTrading/tradovate-rs/pull/19)).
+- Update the locked `jiff` from 0.2.35 to 0.2.37, retaining the existing manifest
+  constraint and refreshing its locked `getrandom` transitive dependency
+  ([#20](https://github.com/SharurTrading/tradovate-rs/pull/20)).
 
 See README migration guidance and ADR 0002. This pre-1.0 minor version denotes the
 changed public recovery contract. `publish = false` remains; no tag or registry release.
