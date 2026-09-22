@@ -26,7 +26,7 @@ consuming application.
 Resolve conflicts in this order:
 
 1. correctness, money safety, security, and cancellation safety;
-2. non-negotiable `TV-*` rules;
+2. non-negotiable `TV-*` rules and `PROC-*` process rules;
 3. locked architecture and lifecycle patterns;
 4. API, idiom, documentation, and file-size standards;
 5. tooling and optional polish.
@@ -65,7 +65,136 @@ Review severities:
 | **TV-SUPPLY-01** | Never suppress an active dependency advisory. A lockfile-only false positive may be ignored only with a checked-in evidence record, a CI feature-graph guard proving the package is inactive under all crate features, and an explicit removal condition. |
 | **TV-CURRENT-01** | The REST surface is generated only from the reviewed, hash-pinned current Partner OpenAPI snapshot. The older API explorer and guide-only fragments are evidence of drift, not implementation inputs. Generated files are checked in, never hand-edited, and must reproduce byte-for-byte under `tools/generate_openapi.py --check`; changing the snapshot or hash requires a semantic, safety, and legacy-divergence review. |
 | **TV-FOLLOWUP-01** | Every follow-up identified anywhere in a change, including its PR description, commit messages, review replies, source comments, coverage ledgers, plans, and research notes, must be completed in that change or tracked by a GitHub issue before merge. Cite the issue number or link at every mention of the deferred work. This includes gaps discovered in adjacent work, exhausted investigation paths, and deferred reviewer questions. Promises of later work, a separate PR, or work outside the current scope do not count as tracking. An issue does not waive required fixes, tests, or documentation in the current change. |
-| **TV-ATTRIBUTION-01** | Every GitHub post an AI agent publishes through a maintainer's identity states the exact model name that produced it, in the agent's own words at the top of that post. This covers coding and review agents alike, and every surface: pull request and issue descriptions, comments, review bodies, inline review comments, release notes, and later comments that answer review feedback. |
+
+## Process rules
+
+`PROC-*` rules are operator rulings that govern repository workflow — issue
+triage, pull-request triage, review and landing, and agent attribution. They are
+enforced with the severities above and cited by rule ID, like the non-negotiables.
+
+### PROC-ATTRIB — attribution of agent posts
+
+An AI agent posting to GitHub under the operator's login — a PR description, an
+issue, a comment or review reply, an inline comment, a release, any other
+publication — states the EXACT MODEL that authored it in the artifact's own body
+(a footer line naming the model is the usual shape), because the post carries the
+operator's identity while speaking with the agent's judgment, and a reader — the
+operator's future self, a reviewer, an auditor — is owed the distinction between
+the operator's voice and the machine's. The attribution names the model identifier
+the harness reports (e.g. GLM-5.3), never a generic "an AI" and never the harness
+or client standing in the model's place, and it lives in the text every reader
+sees — a machine-readable trailer the GitHub UI hides is not disclosure.
+
+```text
+AI-Agent: GLM-5.3
+```
+
+- Never invent, embellish, or round a version. A vendor family and a product
+  persona are not model names.
+- Disclose in the agent's own words. A signature, badge, or hidden trailer that
+  the hosting platform adds to everything is not the agent stating its model.
+- Write it in every surface the agent publishes: pull request and issue
+  descriptions, pull request and issue comments, review bodies, each inline
+  review comment, release notes, and any later comment that answers review
+  feedback.
+- Each inline review comment needs its own line. Review UIs surface them as
+  standalone comments, so a disclosure elsewhere does not cover them.
+- Re-post or edit a surface and the line stays accurate and current. If work
+  moves to a different model, the post names the new model.
+- Stay truthful and current. A model cannot verify its own routing identity with
+  certainty, so the operator may correct the line; the correction must be
+  applied rather than argued.
+- This governs agent posts only. The operator's own posts carry no such line,
+  and an agent must not add one to a human post or remove one the operator
+  wrote.
+- An agent that publishes any surface without its model disclosed violates this
+  rule. That is a governance BLOCKER under the severity definitions above, not
+  a NIT. A reviewer that notices a missing line cites `PROC-ATTRIB` with the
+  offending surface and requires the disclosure before merge. An agent that sees
+  its own surface missing the line fixes it immediately instead of waiting for
+  review.
+
+Commit messages, branches, and source comments are not posts; they are covered
+by the ownership and follow-up rules that already apply to them.
+
+### PROC-ISSUE-TRIAGE — issue classification
+
+Every issue is classified when it is created, and a mis-classified one is
+corrected whenever it is touched. Four things, all mandatory: the native issue
+type (exactly one of Bug, Feature, Task), the kind label that spells it
+(bug / enhancement / task — a fixed 1:1 mapping onto the type, so a reader
+filtering by label and a reader filtering by type see the same set of work), and
+the Priority ISSUE FIELD on the issue itself (Urgent / High / Medium / Low),
+defined once at the ORGANIZATION level. It is an issue field — not a project
+field, and never a label: the value travels with the issue instead of living on
+one board's item, it holds exactly one value that is re-set as urgency changes
+rather than accumulating stale ones, and a label would be free to disagree with
+it. It is read and written through the issue under ordinary repo scope —
+GET/POST on the issue's issue-field-values, with the field id from the
+organization's issue-fields — so a lane that can read the issue can read its
+priority, and no project scope is involved.
+
+The priority ladder is: Urgent — the platform is wrong about money, orders, or
+account state right now, or a live session is blocked; other work stops for it.
+High — it blocks the next live session, or the next step of an active plan.
+Medium — ordinary work, and the DEFAULT: an issue nobody has argued is urgent,
+high, or low is Medium, never unset. Low — polish, nits, and anything deferrable
+without loss.
+
+The fourth is the difficulty label — exactly one of difficulty: hard /
+difficulty: medium / difficulty: easy (operator direction 2026-09-18) — and it
+routes the issue to the class of agent that should take it, which is why it is a
+label where priority is a field: it is working state the repository's own issue
+list filters by, not a fact that must travel with the issue. The ladder is:
+hard — a frontier agent: architecture or identity refactors, money-path and
+reconciliation semantics, concurrency or lifecycle decisions, research-heavy
+evidence work, wide cross-crate changes. medium — a strong coding agent: real
+engineering on a bounded surface the issue itself already specifies. easy — a
+basic coding agent: mechanical, well-scoped work with a clear acceptance check;
+operator-only trackers (live verification, armed probes, decisions awaiting the
+operator under PROC-DECIDE) are easy because no agent performs them at all.
+Difficulty is judged from the issue's own scope at creation and re-set whenever
+understanding changes.
+
+A documentation label sits beside the kind label when the work is docs, and any
+other repository label is welcome; none of those is required. An issue missing
+one of the four is a finding on the next PR that touches it, and in the tracker
+it is a gap the operator is asked to fill rather than a state to leave standing.
+
+### PROC-PR-TRIAGE — pull-request classification
+
+A PR carries the same classification as the issue it closes, so the tracker and
+the PR list read as one body of work: exactly one kind label (bug / enhancement
+/ task, matching what the diff changes), and the same Priority issue field set
+to its linked issue's value — a PR is an issue to the field API, so a reviewer
+reads the value from the PR itself rather than taking it on trust. The label is
+not redundant with the issue's type — native issue types exist on issues only,
+so on a PR the kind label IS the type, and a PR that omits it is unclassified
+however well its issue is labelled. The priority is INHERITED, never re-argued:
+a PR whose value differs from its issue's is a finding, and a genuine
+disagreement is settled on the issue, where the ladder lives. A PR closing no
+issue sets its own priority by that same ladder, and says in its description why
+it closes none. The value is never restated as prose in the description: one
+field, one home, and a copy could only be free to disagree with it.
+
+### PROC-REVIEW — review and landing
+
+All work lands via PR into main. The operator manually starts the configured
+review agent for every PR; its findings cite rule IDs from this file. Every
+review conversation — inline, including outdated threads, and recommendations
+outside the diff in review-summary comments — receives an explicit disposition
+and is resolved before merge, whether relevant or adopted or not: relevant
+adopted findings are fixed, while irrelevant or declined findings are resolved
+with the recorded reason and require no unnecessary code. Human (operator)
+review is required on: anything in crates/domain/ or crates/application/,
+order/RMS/ledger logic, and any new dependency. One FEATURE per PR (operator
+ruling 2026-09-02): a PR is split only when its verification needs separate
+diffs — a pure-move proof, a red-first pin that must land before the change it
+guards — or when parallel lanes need disjoint files; never by step count or
+description length. A plan's steps are the implementer's checklist, not PR
+boundaries. A plan whose groups only make sense together lands as ONE PR when
+the operator rules so (2026-09-05: the keyed-connection-set and
+provider-definition plan); the split criteria above govern everything else.
 
 ## Locked architecture
 
@@ -256,47 +385,6 @@ End reviews with exactly one verdict:
 
 - `REVIEW: REQUEST_CHANGES — <reason>` when any BLOCKER or MAJOR exists.
 - `REVIEW: PASS — <summary>` when only MINOR/NIT findings remain or none exist.
-
-## AI agent attribution
-
-`TV-ATTRIBUTION-01` is a non-negotiable, and it applies to every agent here, whether
-it is changing code or reviewing a change. An agent acts through the maintainer's
-GitHub account: the post carries the maintainer's name while the words are the
-model's. Readers must be able to see which model spoke.
-
-Every agent-published GitHub surface therefore opens with the model's own disclosure
-line, before any finding, summary, checklist, or verdict:
-
-```text
-AI-Agent: <exact model name>
-```
-
-- Name the exact routing identity: the model identifier, plus the harness when the
-  harness distinguishes routes. `an AI assistant`, `a language model`, a vendor
-  family, and a product persona are not model names. Never invent, embellish, or
-  round a version.
-- Disclose in the agent's own words. A signature, trailer, or badge that the hosting
-  platform adds to everything is not the agent stating its model.
-- Write it in every surface the agent publishes: pull request and issue descriptions,
-  pull request and issue comments, review bodies, each inline review comment, release
-  notes, and any later comment that answers review feedback.
-- Each inline review comment needs its own line. Review UIs surface them as standalone
-  comments, so a disclosure in the review body does not cover them.
-- Re-post or edit a surface and the line stays accurate and current. If work moves to
-  a different model, the new post names the new model.
-- Stay truthful and current. A model cannot verify its own routing identity with
-  certainty, so the maintainer may correct the line; the correction must be applied
-  rather than argued.
-- This governs agent posts only. The maintainer's own posts carry no such line, and an
-  agent must not add one to a human post or remove one the maintainer wrote.
-- An agent that publishes any surface without its model disclosed violates this rule.
-  That is a governance BLOCKER under the severity definitions above, not a NIT. A
-  reviewer that notices a missing line cites `TV-ATTRIBUTION-01` with the offending
-  surface and requires the disclosure before merge. An agent that sees its own surface
-  missing the line fixes it immediately instead of waiting for review.
-
-Commit messages, branches, and source comments are not posts; they are covered by the
-ownership and follow-up rules that already apply to them.
 
 ## Release gate
 

@@ -101,19 +101,22 @@ not a normal issue.
 
 ## AI agent posts
 
-An AI agent that posts here does so through a maintainer's GitHub account. Every
+An AI agent that posts here does so through the operator's GitHub account. Every
 surface it publishes — pull request and issue descriptions, comments, review bodies,
 inline review comments, release notes, and later comments that answer review
-feedback — opens with the model's own disclosure line:
+feedback — states the exact model that authored it in the artifact's own body; a
+footer line naming the model is the usual shape:
 
 ```text
-AI-Agent: <exact model name>
+AI-Agent: GLM-5.3
 ```
 
-Name the precise routing identity, not a vendor family or persona. This applies
-equally to agents that change code and agents that review it; [`AGENTS.md`](AGENTS.md)
-carries the complete `TV-ATTRIBUTION-01` rule, including one disclosure line per
-inline review comment. The maintainer's own posts carry no such line.
+Name the model identifier the harness reports, never a generic "an AI" and never
+the harness or client standing in the model's place, and keep the line in the text
+every reader sees. This applies equally to agents that change code and agents that
+review it; [`AGENTS.md`](AGENTS.md) carries the complete `PROC-ATTRIB` rule,
+including one disclosure line per inline review comment. The operator's own posts
+carry no such line.
 
 ## Dependency changes
 
