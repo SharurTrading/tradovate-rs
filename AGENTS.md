@@ -197,6 +197,34 @@ boundaries. A plan whose groups only make sense together lands as ONE PR when
 the operator rules so (2026-09-05: the keyed-connection-set and
 provider-definition plan); the split criteria above govern everything else.
 
+### PROC-DEP-DECIDE — dependency findings escalate internally
+
+A dependency finding is an organization decision before it is anything
+external. Whenever work in any SharurTrading repository finds that a
+dependency — crate, library, framework, toolchain, or service — may be
+defective, unsafe, or wrongly chosen, including any dependency behavior
+that makes a repository's own law impossible to follow (hidden retries
+that defeat mutation rules, hidden runtimes that defeat runtime
+ownership, silent pooling that defeats admission control, or any
+behavior that compromises secret handling, cancellation, or ordering
+guarantees), the discovering agent files an issue in the affected
+repository — or in the platform repository when the finding spans
+repositories — and does nothing else externally. That issue carries the
+evidence (pinned versions, dependency-source citations, affected rule
+IDs) and the operator's requirements; it does not prescribe an upstream
+fix. Engagement outside the SharurTrading organization — opening,
+commenting on, or reacting to issues or pull requests in any
+third-party repository — is an operator decision under PROC-DECIDE,
+taken only after the internal issue exists and the organization has
+investigated depth and blast radius. An agent may draft the upstream
+report when the operator asks, but never publishes it: no agent opens
+an out-of-organization issue on its own initiative, no matter how
+obvious the upstream responsibility, how small the fix appears, or how
+certain the defect. If the internal investigation concludes the fault
+is upstream, the outcome is a recommendation recorded on the internal
+issue, and external filing remains the operator's act. Canonical text:
+SharurPlatform PR #1007.
+
 ## Locked architecture
 
 ### Capability-oriented source tree
