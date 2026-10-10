@@ -415,6 +415,9 @@ End reviews with exactly one verdict:
 - `REVIEW: REQUEST_CHANGES — <reason>` when any BLOCKER or MAJOR exists.
 - `REVIEW: PASS — <summary>` when only MINOR/NIT findings remain or none exist.
 
+- **PROC_REVIEW_AGENTS** — If you are reviewing an open github PR, leave inline and outside diff comments (and a summary if needed), the type of comment should depend on if it is possible or suitable to do inline. On each comment attribute your model name in line with PROC-ATTRIB.
+- **PROC-POST_REVIEW** Assess all inline and outside diff comments + summaries. You have final say on what is valid but all comments must be resolved before we can merge due to rulesets.
+
 ## Release gate
 
 Every release originates from a reviewed pull request and the exact merged
