@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Kevin Monaghan
+# SPDX-License-Identifier: MIT-0
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public Kache cache namespace, not an authentication credential"
+ruleIDs = ["generic-api-key"]
+regexTarget = "secret"
+regexes = ['''^sharurtrading-kache-prepass-2026-10-11$''']
