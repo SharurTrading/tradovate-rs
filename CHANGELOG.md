@@ -41,6 +41,43 @@ This project is pre-release. No release entries have been published.
   use encryption in plaintext. `cargo deny` and `cargo audit` previously failed on
   every run and now pass without ignores. This lockfile-only change applies to both
   the REST and realtime TLS stacks and introduces no API change.
+- Update `rustls` from 0.23.45 to 0.23.46 to clear four active advisories:
+  [RUSTSEC-2026-0346](https://rustsec.org/advisories/RUSTSEC-2026-0346) (derived
+  `Debug` implementations could expose TLS 1.2 master secrets or TLS 1.3 resumption
+  PSKs to custom session-store logging),
+  [RUSTSEC-2026-0347](https://rustsec.org/advisories/RUSTSEC-2026-0347) (application
+  data buffered before an ECH rejection could be sent to the outer server),
+  [RUSTSEC-2026-0348](https://rustsec.org/advisories/RUSTSEC-2026-0348) (the optional
+  Brotli certificate decompressor accepted a peer-selected window large enough to
+  request a 1 GiB allocation), and
+  [RUSTSEC-2026-0349](https://rustsec.org/advisories/RUSTSEC-2026-0349) (an
+  unauthenticated ServerHello could pin a classical key share for later
+  connections). This lockfile-only change applies to both the REST and realtime
+  TLS stacks and introduces no API change.
+- Update `quinn-proto` from 0.11.17 to 0.11.19 to clear three advisories now
+  flagged by `cargo audit` in the HTTP/3 dependency tree carried in the lockfile:
+  [RUSTSEC-2026-0338](https://rustsec.org/advisories/RUSTSEC-2026-0338) (zero-length
+  STREAM frames during unordered reads),
+  [RUSTSEC-2026-0340](https://rustsec.org/advisories/RUSTSEC-2026-0340) (peer minimum
+  ACK delay with `ACK_FREQUENCY` transmission), and
+  [RUSTSEC-2026-0343](https://rustsec.org/advisories/RUSTSEC-2026-0343) (outgoing
+  datagram buffer accounting). A remote peer could panic the QUIC connection handler
+  in each case. Together with the `rustls` upgrade above, `cargo deny` and
+  `cargo audit` now pass without ignores. The `http3` reqwest feature remains
+  disabled; this is a lockfile-only change with no API change.
+- Update `rustls-webpki` from 0.103.14 to 0.103.16 and the locked
+  `webpki-roots` and `webpki-root-certs` from 1.0.9 to 1.0.10 to clear three
+  active advisories: [RUSTSEC-2026-0381](https://rustsec.org/advisories/RUSTSEC-2026-0381)
+  and [RUSTSEC-2026-0383](https://rustsec.org/advisories/RUSTSEC-2026-0383)
+  (the bundled root stores included `emSign ECC Root CA - G3`, which can allow
+  certificate paths through distrusted emSign intermediates whose private keys
+  are now well known), and
+  [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382)
+  (certificate verification could accept those distrusted intermediates).
+  The `webpki-roots` 0.26.11 compatibility wrapper carries no trust store of
+  its own and re-exports from the updated 1.x parent. `cargo deny` and
+  `cargo audit` now pass without ignores. This lockfile-only change applies to
+  both the REST and realtime TLS stacks and introduces no API change.
 
 ### Dependency and CI maintenance
 
@@ -66,6 +103,14 @@ This project is pre-release. No release entries have been published.
 - Update the locked `jiff` from 0.2.35 to 0.2.37, retaining the existing manifest
   constraint and refreshing its locked `getrandom` transitive dependency
   ([#20](https://github.com/SharurTrading/tradovate-rs/pull/20)).
+- Update the SHA-pinned `taiki-e/install-action` from 2.87.14 to 2.87.26
+  ([#25](https://github.com/SharurTrading/tradovate-rs/pull/25)).
+- Update the locked `cargo-minor-patch` group: `jiff` 0.2.37 to 0.2.38 (refreshing
+  the bundled IANA time zone database to 2026e), `serde_json` 1.0.151 to 1.0.154,
+  `thiserror` 2.0.20 to 2.0.21, `tokio` 1.53.1 to 1.53.3, `tokio-util` 0.7.19 to
+  0.7.20, and `proptest` 1.11.0 to 1.12.0. The manifest constraints are unchanged;
+  `proptest` swaps `rand_chacha` for `chacha20` in the dev-only test graph
+  ([#34](https://github.com/SharurTrading/tradovate-rs/pull/34)).
 
 See README migration guidance and ADR 0002. This pre-1.0 minor version denotes the
 changed public recovery contract. `publish = false` remains; no tag or registry release.
