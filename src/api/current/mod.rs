@@ -11,6 +11,7 @@
 mod demo_balance;
 mod generated;
 mod mutations;
+pub(crate) mod spec;
 pub(crate) mod support;
 
 pub use generated::{
@@ -28,36 +29,11 @@ pub use mutations::{
     CreateTradovateSubscriptionRequest, CreateUserPluginRequest,
     UpdateMarketDataSubscriptionRequest, UpdatePoaContactRequest, UpdateUserPluginRequest,
 };
+pub use spec::{SCHEMA_GAPS, SPEC_SHA256, SPEC_SNAPSHOT_DATE};
 pub use support::{
     BuildError, DocumentedAcknowledgement, HttpMethod, Operation, OperationClass, OperationSurface,
     ResponseContract, SchemaGap, SecretValue,
 };
-
-/// SHA-256 of the pinned official current Partner `OpenAPI` JSON.
-pub const SPEC_SHA256: &str = "37caeccf4b0913460a788fcaf4c902497059b8ffe6f6355512e6c08eaacde769";
-
-/// Date on which the official current Partner contract was pinned.
-pub const SPEC_SNAPSHOT_DATE: &str = "2026-08-21";
-
-/// Current component schemas that cannot be represented losslessly without
-/// inventing a value grammar or exposing raw JSON.
-pub const SCHEMA_GAPS: &[SchemaGap] = &[
-    SchemaGap {
-        schema: "ExtraPreTradeRiskProducts",
-        operations: &["/order/dryrun"],
-        reason: "the current component is an object with no value schema",
-    },
-    SchemaGap {
-        schema: "ExtraPreTradeRiskContracts",
-        operations: &["/order/dryrun"],
-        reason: "the current component is an object with no value schema",
-    },
-    SchemaGap {
-        schema: "RollContractsResponseContracts",
-        operations: &["/contract/rollcontracts"],
-        reason: "the current response map has no key or value schema",
-    },
-];
 
 #[cfg(test)]
 mod tests;

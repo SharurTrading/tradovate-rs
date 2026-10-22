@@ -81,6 +81,14 @@ This project is pre-release. No release entries have been published.
 
 ### Dependency and CI maintenance
 
+- Enforce declarations-only module roots in CI: `scripts/ci/check_mod_declarations.py`
+  rejects `mod.rs` files containing type definitions, functions, `impl` blocks,
+  constants, statics, or private imports (STYLE-MOD-DECLS), with `generated/` module
+  roots exempt on the same generator-marker terms as other generated sources. The
+  client, rate-limit, and current-API module roots move their implementations into
+  focused sibling files (`client/handle.rs`, `rate_limit/governor.rs`,
+  `api/current/spec.rs`) by verbatim code movement with re-exports preserving every
+  existing item path; no behavior, test, or public API changes.
 - Drive the unanswered-ping burst regression with an explicit test clock so real
   TCP delivery delays cannot race its liveness deadline. Preserve repeated-batch
   coverage and the original `LivenessTimeout` assertion; production timing is unchanged.

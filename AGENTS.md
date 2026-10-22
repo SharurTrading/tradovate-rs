@@ -284,10 +284,12 @@ Split crates only when a real ownership, dependency, trust, or runtime boundary 
 - **STYLE-MOD-DECLS** — `mod.rs` contains only the copyright header, module
   documentation and attributes, out-of-line module declarations, and re-exports.
   Type definitions, functions, `impl` blocks, constants, statics, macro definitions
-  and test bodies belong in focused sibling files. Enforce this for new modules
-  and `mod.rs` files changed by the task; do not launch an unrelated repository-wide
-  cleanup. If you touch a mod that has not enforced this yet, it is your duty to
-  enforce it at the time of implementation.
+  and test bodies belong in focused sibling files. `scripts/ci/check_mod_declarations.py`
+  enforces this in CI; `mod.rs` files under a `generated/` path segment are exempt
+  on the same generator-marker terms as other generated sources. Enforce this for
+  new modules and `mod.rs` files changed by the task; do not launch an unrelated
+  repository-wide cleanup. If you touch a mod that has not enforced this yet, it is
+  your duty to enforce it at the time of implementation.
 - Prefer the smallest API that expresses a provider contract completely.
 - Use private fields for invariant-bearing request and configuration types.
 - Use `From`/`TryFrom`, `FromStr`, `AsRef`, and standard iterator conventions.
