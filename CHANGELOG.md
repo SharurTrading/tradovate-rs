@@ -65,6 +65,19 @@ This project is pre-release. No release entries have been published.
   in each case. Together with the `rustls` upgrade above, `cargo deny` and
   `cargo audit` now pass without ignores. The `http3` reqwest feature remains
   disabled; this is a lockfile-only change with no API change.
+- Update `rustls-webpki` from 0.103.14 to 0.103.16 and the locked
+  `webpki-roots` and `webpki-root-certs` from 1.0.9 to 1.0.10 to clear three
+  active advisories: [RUSTSEC-2026-0381](https://rustsec.org/advisories/RUSTSEC-2026-0381)
+  and [RUSTSEC-2026-0383](https://rustsec.org/advisories/RUSTSEC-2026-0383)
+  (the bundled root stores included `emSign ECC Root CA - G3`, which can allow
+  certificate paths through distrusted emSign intermediates whose private keys
+  are now well known), and
+  [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382)
+  (certificate verification could accept those distrusted intermediates).
+  The `webpki-roots` 0.26.11 compatibility wrapper carries no trust store of
+  its own and re-exports from the updated 1.x parent. `cargo deny` and
+  `cargo audit` now pass without ignores. This lockfile-only change applies to
+  both the REST and realtime TLS stacks and introduces no API change.
 
 ### Dependency and CI maintenance
 
