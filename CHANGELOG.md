@@ -88,7 +88,9 @@ This project is pre-release. No release entries have been published.
   client, rate-limit, and current-API module roots move their implementations into
   focused sibling files (`client/handle.rs`, `rate_limit/governor.rs`,
   `api/current/spec.rs`) by verbatim code movement with re-exports preserving every
-  existing item path; no behavior, test, or public API changes.
+  existing item path; no Rust behavior or public API changes. The checker respects
+  nested comments, literal contents, attributes, and item boundaries; synthetic
+  regression fixtures run in CI.
 - Drive the unanswered-ping burst regression with an explicit test clock so real
   TCP delivery delays cannot race its liveness deadline. Preserve repeated-batch
   coverage and the original `LivenessTimeout` assertion; production timing is unchanged.

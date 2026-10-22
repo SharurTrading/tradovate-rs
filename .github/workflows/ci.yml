@@ -55,6 +55,9 @@ jobs:
       - name: Enforce declarations-only module roots
         run: python3 scripts/ci/check_mod_declarations.py
 
+      - name: Test module-root policy fixtures
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+
       - name: Prove shared HTTP client safety invariants
         shell: bash
         run: |
