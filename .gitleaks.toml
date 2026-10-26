@@ -3,3 +3,13 @@
 
 [extend]
 useDefault = true
+
+# The Kache cache-key salt below is a public namespace separator, not a
+# credential. Kache configuration was removed from the working tree, but the
+# string remains in reachable git history, and the full-history secret scan
+# flags it as a generic API key without this suppression.
+[[allowlists]]
+description = "Historical Kache cache namespace in git history, not an authentication credential"
+ruleIDs = ["generic-api-key"]
+regexTarget = "secret"
+regexes = ['''^sharurtrading-kache-prepass-2026-10-11$''']
