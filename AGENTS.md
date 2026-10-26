@@ -152,8 +152,8 @@ reconciliation semantics, concurrency or lifecycle decisions, research-heavy
 evidence work, wide cross-crate changes. medium — a strong coding agent: real
 engineering on a bounded surface the issue itself already specifies. easy — a
 basic coding agent: mechanical, well-scoped work with a clear acceptance check;
-operator-only trackers (live verification, armed probes, decisions awaiting the
-operator under PROC-DECIDE) are easy because no agent performs them at all.
+operator-only trackers (live verification, armed probes) are easy because no
+agent performs them at all.
 Difficulty is judged from the issue's own scope at creation and re-set whenever
 understanding changes.
 
@@ -214,7 +214,7 @@ evidence (pinned versions, dependency-source citations, affected rule
 IDs) and the operator's requirements; it does not prescribe an upstream
 fix. Engagement outside the SharurTrading organization — opening,
 commenting on, or reacting to issues or pull requests in any
-third-party repository — is an operator decision under PROC-DECIDE,
+third-party repository — is an operator decision,
 taken only after the internal issue exists and the organization has
 investigated depth and blast radius. An agent may draft the upstream
 report when the operator asks, but never publishes it: no agent opens
