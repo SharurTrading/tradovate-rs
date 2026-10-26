@@ -93,6 +93,17 @@ This project is pre-release. No release entries have been published.
 
 ### Dependency and CI maintenance
 
+- Update the SHA-pinned `Swatinem/rust-cache` from 2.9.2 to 2.9.3 and the
+  SHA-pinned `taiki-e/install-action` from 2.87.26 to 2.87.30
+  ([#38](https://github.com/SharurTrading/tradovate-rs/pull/38)).
+- Update the SHA-pinned `dtolnay/rust-toolchain` from `02cb101ec7c4` to
+  `683b588c487a` ([#39](https://github.com/SharurTrading/tradovate-rs/pull/39)).
+- Update the locked `tokio` from 1.53.3 to 1.54.1, retaining the existing
+  manifest constraint ([#40](https://github.com/SharurTrading/tradovate-rs/pull/40)).
+- Update `parking_lot` from 0.12.5 to 0.13.0
+  ([#41](https://github.com/SharurTrading/tradovate-rs/pull/41)).
+- Update the locked dev-dependency `httpmock` from 0.8.3 to 0.9.0
+  ([#42](https://github.com/SharurTrading/tradovate-rs/pull/42)).
 - Enforce declarations-only module roots in CI: `scripts/ci/check_mod_declarations.py`
   rejects `mod.rs` files containing type definitions, functions, `impl` blocks,
   constants, statics, or private imports (STYLE-MOD-DECLS), with `generated/` module
