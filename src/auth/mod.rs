@@ -12,4 +12,6 @@ pub use credentials::{Credentials, CredentialsBuilder};
 pub use token::SessionInfo;
 
 pub(crate) use credentials::ApiClientId;
-pub(crate) use token::{InstalledSession, RenewalAttempt, TokenKind, TokenSnapshot, TokenStore};
+pub(crate) use token::{
+    InstalledSession, RenewalAttempt, TokenKind, TokenSnapshot, TokenStore, is_valid_bearer_token,
+};

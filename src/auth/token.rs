@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 use secrecy::{ExposeSecret, SecretString};
 
 use crate::{Error, UserId};
-use validation::is_valid_bearer_token;
+pub(crate) use validation::is_valid_bearer_token;
 
 /// Non-secret metadata for the installed Tradovate session.
 #[derive(Clone, Debug, Eq, PartialEq)]

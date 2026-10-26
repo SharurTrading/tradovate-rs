@@ -274,3 +274,121 @@ async fn oauth_token_mixed_with_error_description_is_rejected() {
     identity.assert_calls_async(0).await;
     assert!(client.session_info().is_none());
 }
+
+#[tokio::test]
+async fn adopt_session_exchanges_external_token_via_renewal() {
+    let server = MockServer::start_async().await;
+    let renewal = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/v1/auth/renewaccesstoken")
+                .header("authorization", "Bearer synthetic-external-access");
+            then.status(200).json_body(json!({
+                "accessToken": "synthetic-adopted-access",
+                "mdAccessToken": "synthetic-adopted-market-data",
+                "expirationTime": "2035-08-21T01:30:00Z",
+                "userId": 7
+            }));
+        })
+        .await;
+    let client = fixture_client(&server);
+
+    let session = client
+        .adopt_session("synthetic-external-access")
+        .await
+        .unwrap_or_else(|error| panic!("adoption must succeed: {error}"));
+    renewal.assert_async().await;
+    assert_eq!(session.user_id().get(), 7);
+    assert!(session.has_market_data_access());
+    assert!(
+        client
+            .session_info()
+            .is_some_and(|info| info.user_id() == session.user_id())
+    );
+}
+
+#[tokio::test]
+async fn adopt_session_rejects_provider_business_failure() {
+    let server = MockServer::start_async().await;
+    let renewal = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/v1/auth/renewaccesstoken")
+                .header("authorization", "Bearer synthetic-refused-access");
+            then.status(200).json_body(json!({
+                "errorText": "Synthetic refusal"
+            }));
+        })
+        .await;
+    let client = fixture_client(&server);
+
+    assert!(matches!(
+        client.adopt_session("synthetic-refused-access").await,
+        Err(Error::Business { .. })
+    ));
+    renewal.assert_async().await;
+    assert!(client.session_info().is_none());
+}
+
+#[tokio::test]
+async fn adopt_session_rejects_http_unauthorized() {
+    let server = MockServer::start_async().await;
+    let renewal = server
+        .mock_async(|when, then| {
+            when.method(GET).path("/v1/auth/renewaccesstoken");
+            then.status(401);
+        })
+        .await;
+    let client = fixture_client(&server);
+
+    assert!(matches!(
+        client.adopt_session("synthetic-expired-access").await,
+        Err(Error::HttpStatus { status: 401, .. })
+    ));
+    renewal.assert_async().await;
+    assert!(client.session_info().is_none());
+}
+
+#[tokio::test]
+async fn adopt_session_rejects_invalid_syntax_before_transmission() {
+    let server = MockServer::start_async().await;
+    let renewal = server
+        .mock_async(|when, then| {
+            when.method(GET).path("/v1/auth/renewaccesstoken");
+            then.status(200);
+        })
+        .await;
+    let client = fixture_client(&server);
+
+    assert!(matches!(
+        client.adopt_session("synthetic token with spaces").await,
+        Err(Error::InvalidRequest {
+            field: "access_token",
+            ..
+        })
+    ));
+    renewal.assert_calls_async(0).await;
+    assert!(client.session_info().is_none());
+}
+
+#[tokio::test]
+async fn adopt_session_attempt_invalidates_prior_session() {
+    let server = MockServer::start_async().await;
+    let client = authenticated_client(&server).await;
+    assert!(client.session_info().is_some());
+    let renewal = server
+        .mock_async(|when, then| {
+            when.method(GET).path("/v1/auth/renewaccesstoken");
+            then.status(200).json_body(json!({
+                "errorText": "Synthetic refusal"
+            }));
+        })
+        .await;
+
+    assert!(matches!(
+        client.adopt_session("synthetic-external-access").await,
+        Err(Error::Business { .. })
+    ));
+    renewal.assert_async().await;
+    assert!(client.session_info().is_none());
+}

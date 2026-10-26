@@ -42,7 +42,7 @@ by itself make a state-changing operation callable.
 
 | Capability | Current coverage |
 | --- | --- |
-| Authentication | Direct API-key login, OAuth token exchange plus `/auth/me`, expiry/revision-fenced renewal, redacted session metadata, and client-bound delayed penalty retry |
+| Authentication | Direct API-key login, OAuth token exchange plus `/auth/me`, expiry/revision-fenced renewal, redacted session metadata, client-bound delayed penalty retry, and provider-verified adoption of an externally obtained session token (documented workaround, see below) |
 | Current REST contract | All 350 operations and all 278 component schemas in the 2026-08-21 Partner OpenAPI pin |
 | Operation classes | 271 query, 73 mutation, and 6 lifecycle operations |
 | Public surfaces | 263 generated query methods, 71 reviewed specialized methods, 0 modeled-only operations, and 16 explicit documentation-blocked operations |
@@ -113,12 +113,28 @@ fn credentials() -> Result<Credentials, Box<dyn std::error::Error>> {
         .app_version("1.0")
         .numeric_client_id(123)
         .secret("issued-api-key-secret")
-        .device_id(DeviceId::new("stable-device-id")?)
-        .hibp_check(true)
-        .build()?;
+    .device_id(DeviceId::new("stable-device-id")?)
+    .hibp_check(true)
+    .build()?;
     Ok(credentials)
 }
 ```
+
+### Session-token adoption (workaround)
+
+`Client::adopt_session` exists for accounts that have no documented
+programmatic access — for example prop-firm evaluation accounts that can
+neither register an API key nor an OAuth client. The caller signs into
+Tradovate's web application out-of-band, extracts that session's bearer token,
+and passes it to `adopt_session`, which exchanges it through the renewal
+endpoint and installs only the provider-returned session.
+
+This is a **workaround, not an officially supported method of connecting**.
+Tradovate's documented contracts are the API-key access-token request and the
+OAuth code exchange; nothing in the provider documentation promises that a
+web-session token can be exchanged this way, and the provider may change or
+reject the behavior without notice. Prefer a documented method whenever the
+account qualifies for one.
 
 ## Architecture
 

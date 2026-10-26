@@ -3,6 +3,8 @@
 
 //! Direct API-key authentication and token renewal.
 
+#[path = "authentication/adoption.rs"]
+mod adoption;
 #[path = "authentication/credential_changes.rs"]
 mod credential_changes;
 #[path = "authentication/validation.rs"]
