@@ -3,7 +3,7 @@
 
 //! Bearer-token syntax validation.
 
-pub(super) fn is_valid_bearer_token(token: &str) -> bool {
+pub(crate) fn is_valid_bearer_token(token: &str) -> bool {
     if token.is_empty() {
         return false;
     }

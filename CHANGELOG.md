@@ -9,6 +9,18 @@ This project is pre-release. No release entries have been published.
 
 ## [Unreleased] — 0.2.0
 
+### Added
+
+- Add `Client::adopt_session`, a documented **workaround** (not an officially
+  supported connection method) for accounts such as prop-firm evaluations that
+  cannot register an API key or OAuth client: the caller supplies a bearer
+  token obtained out-of-band from Tradovate's web application, and the crate
+  exchanges it through the renewal endpoint so only the provider-returned
+  session — access token, market-data token, user identifier, and expiration —
+  is installed. Adoption is revision-fenced like `authenticate`, rejects
+  invalid bearer syntax before transmission, installs nothing when the
+  provider refuses the token, and never logs the token.
+
 ### Breaking recovery changes
 
 - Preserve healthy realtime sockets across request timeout/cancellation, malformed
