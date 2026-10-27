@@ -3,9 +3,11 @@
 
 //! Fail-closed current authentication and credential-rotation contracts.
 
+use std::str::FromStr;
 use std::time::Duration;
 
 use httpmock::prelude::*;
+use jiff::Timestamp;
 use serde_json::json;
 use tokio::time::timeout;
 use tradovate_client::{
@@ -53,6 +55,11 @@ fn password_request(user_id: Option<UserId>) -> ModifyPassword {
     builder
         .build()
         .unwrap_or_else(|error| panic!("fixture password request must build: {error}"))
+}
+
+fn fixture_expiration(value: &str) -> Timestamp {
+    Timestamp::from_str(value)
+        .unwrap_or_else(|error| panic!("fixture timestamp must parse: {error}"))
 }
 
 async fn authenticated_client(server: &MockServer) -> Client {
@@ -389,6 +396,105 @@ async fn adopt_session_attempt_invalidates_prior_session() {
         client.adopt_session("synthetic-external-access").await,
         Err(Error::Business { .. })
     ));
+    renewal.assert_async().await;
+    assert!(client.session_info().is_none());
+}
+
+#[tokio::test]
+async fn adopted_session_renews_without_credentials() {
+    let server = MockServer::start_async().await;
+    let adoption = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/v1/auth/renewaccesstoken")
+                .header("authorization", "Bearer synthetic-external-access");
+            then.status(200).json_body(json!({
+                "accessToken": "synthetic-adopted-access",
+                "expirationTime": "2035-08-21T01:30:00Z",
+                "userId": 7
+            }));
+        })
+        .await;
+    let renewal = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/v1/auth/renewaccesstoken")
+                .header("authorization", "Bearer synthetic-adopted-access");
+            then.status(200).json_body(json!({
+                "accessToken": "synthetic-renewed-access",
+                "expirationTime": "2040-01-01T00:00:00Z",
+                "userId": 7
+            }));
+        })
+        .await;
+    let client = fixture_client(&server);
+
+    let adopted = client
+        .adopt_session("synthetic-external-access")
+        .await
+        .unwrap_or_else(|error| panic!("adoption must succeed: {error}"));
+    let renewed = client
+        .renew_access_token()
+        .await
+        .unwrap_or_else(|error| panic!("renewal without credentials must succeed: {error}"));
+
+    adoption.assert_calls_async(1).await;
+    renewal.assert_calls_async(1).await;
+    assert_eq!(adopted.user_id().get(), 7);
+    assert_eq!(
+        adopted.expires_at(),
+        fixture_expiration("2035-08-21T01:30:00Z")
+    );
+    let installed = client
+        .session_info()
+        .unwrap_or_else(|| panic!("renewed session must stay installed"));
+    assert_eq!(installed, renewed);
+    assert_eq!(installed.user_id().get(), 7);
+    assert_eq!(
+        installed.expires_at(),
+        fixture_expiration("2040-01-01T00:00:00Z")
+    );
+}
+
+#[tokio::test]
+async fn renewal_of_adopted_session_preserves_user_identity() {
+    let server = MockServer::start_async().await;
+    let adoption = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/v1/auth/renewaccesstoken")
+                .header("authorization", "Bearer synthetic-external-access");
+            then.status(200).json_body(json!({
+                "accessToken": "synthetic-adopted-access",
+                "expirationTime": "2035-08-21T01:30:00Z",
+                "userId": 7
+            }));
+        })
+        .await;
+    let renewal = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/v1/auth/renewaccesstoken")
+                .header("authorization", "Bearer synthetic-adopted-access");
+            then.status(200).json_body(json!({
+                "accessToken": "synthetic-cross-user-access",
+                "expirationTime": "2035-08-21T01:30:00Z",
+                "userId": 8
+            }));
+        })
+        .await;
+    let client = fixture_client(&server);
+    let adopted = client
+        .adopt_session("synthetic-external-access")
+        .await
+        .unwrap_or_else(|error| panic!("adoption must succeed: {error}"));
+    assert_eq!(adopted.user_id().get(), 7);
+
+    assert!(matches!(
+        client.renew_access_token().await,
+        Err(Error::InvalidAuthenticationResponse { .. })
+    ));
+    adoption.assert_async().await;
     renewal.assert_async().await;
     assert!(client.session_info().is_none());
 }
