@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT-0
 
 use super::*;
-use super::*;
 
 fn shutdown_fixture() -> RealtimeEventPayload {
     RealtimeEventPayload::Shutdown(super::super::ShutdownEvent {
