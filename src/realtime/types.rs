@@ -3,7 +3,7 @@
 
 //! Public realtime connection identity, lifecycle, and event envelopes.
 
-use std::fmt;
+use std::{fmt, time::Duration};
 
 use super::event::RealtimeEventPayload;
 
@@ -69,8 +69,6 @@ pub enum DisconnectReason {
 pub enum ResyncReason {
     /// An application record could not be decoded; the transport remains active.
     MalformedRecord,
-    /// The bounded event queue filled before the consumer drained it.
-    EventBufferOverflow,
     /// The active transport ended unexpectedly, leaving an unknown event gap.
     ConnectionLost,
     /// A caller abandoned an admitted request before observing its outcome.
@@ -79,6 +77,42 @@ pub enum ResyncReason {
     HeartbeatDeadlineMissed,
     /// A provider event could not be represented without dropping semantics.
     UnsupportedEvent,
+}
+
+/// Observed retained-event lag for one socket generation.
+///
+/// Accepted venue events are retained in source order until the consumer
+/// delivers them, so a slow receiver observes lag rather than a locally
+/// fabricated gap. This snapshot is evidence for the consuming platform —
+/// which alone decides whether a delayed event may still authorize trading —
+/// and never installs a continuity gap by itself. Lifecycle evidence (shutdown
+/// notices, continuity markers, generation end) is not backlog.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EventBacklog {
+    depth: usize,
+    oldest_event_age: Option<Duration>,
+}
+
+impl EventBacklog {
+    pub(super) const fn new(depth: usize, oldest_event_age: Option<Duration>) -> Self {
+        Self {
+            depth,
+            oldest_event_age,
+        }
+    }
+
+    /// Number of accepted venue events retained but not yet delivered.
+    #[must_use]
+    pub const fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// How long the oldest retained, undelivered venue event has waited;
+    /// [`None`] when nothing is retained.
+    #[must_use]
+    pub const fn oldest_event_age(&self) -> Option<Duration> {
+        self.oldest_event_age
+    }
 }
 
 /// Observable lifecycle state for one socket generation.

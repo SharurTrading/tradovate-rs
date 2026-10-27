@@ -166,16 +166,28 @@ fn timestamp_builder_field_round_trips() {
 }
 
 #[test]
-fn oversized_chart_packet_array_is_a_typed_limit_failure() {
-    let packets = (0..=super::decode::MAX_PACKETS)
-        .map(|_| "{}")
+fn chart_packets_above_the_former_fixed_cap_decode_fully() {
+    let packets = (1..=4_100)
+        .map(|index| format!(r#"{{"id":{index},"eoh":true}}"#))
         .collect::<Vec<_>>()
         .join(",");
     let payload = format!(r#"{{"charts":[{packets}]}}"#);
     let raw = raw(&payload);
 
+    let decoded = decode::event(Some(&raw));
+    let Ok(event) = decoded else {
+        panic!("4,100 chart packets exceed the former fixed cap and must decode");
+    };
+    assert_eq!(event.packets().len(), 4_100);
+}
+
+#[test]
+fn configured_chart_packet_bound_is_a_typed_limit_failure() {
+    let raw = raw(r#"{"charts":[{},{},{}]}"#);
+
+    let decoded = crate::realtime::bounded::with_limit(2, || decode::event(Some(&raw)));
     assert!(matches!(
-        decode::event(Some(&raw)),
+        decoded,
         Err(RealtimeError::InvalidEvent {
             reason: RealtimePayloadError::LimitExceeded,
             ..

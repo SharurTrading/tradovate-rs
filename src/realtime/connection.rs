@@ -88,6 +88,17 @@ impl RealtimeConnection {
         self.events.recv().await
     }
 
+    /// Observes retained-event lag without consuming events.
+    ///
+    /// Accepted venue events are retained in source order until delivered, so
+    /// backlog depth and oldest-event age are observational lag, never a
+    /// continuity failure. The consuming platform alone decides whether a
+    /// delayed event may still authorize trading.
+    #[must_use]
+    pub fn backlog(&self) -> super::EventBacklog {
+        self.events.backlog()
+    }
+
     /// Captures this immutable generation for concurrent subscription work.
     ///
     /// Capture before dispatching a task. The handle has no lifecycle or recovery
@@ -238,10 +249,7 @@ impl Client {
         )?;
         let connection_id = next_connection_id();
         let (commands, command_receiver) = mpsc::channel(config.command_channel_capacity());
-        let events = Arc::new(super::delivery::Delivery::new(
-            connection_id,
-            config.event_channel_capacity(),
-        ));
+        let events = Arc::new(super::delivery::Delivery::new(connection_id));
         let initial_state = RealtimeState::Connecting { connection_id };
         let (state_sender, state) = watch::channel(initial_state);
         let (ready_sender, ready) = oneshot::channel();

@@ -19,6 +19,7 @@ mod continuity;
 mod market_data;
 mod support;
 mod user_sync;
+mod user_sync_deltas;
 
 use support::*;
 
@@ -112,28 +113,39 @@ async fn authorization_stages_event_only_and_co_batched_frames_in_order() {
 }
 
 #[tokio::test]
-async fn event_overflow_retains_a_gap_before_transport_termination() {
+async fn genuine_loss_retains_a_gap_before_transport_termination() {
     let (listener, url) = bind().await;
     let server = tokio::spawn(async move {
         let mut socket = accept(listener).await;
         authorize(&mut socket).await;
         send_text(
             &mut socket,
-            r#"a[{"e":"md","d":{"quotes":[{"timestamp":"2026-08-21T00:00:00Z","contractId":42,"entries":{"Trade":{"price":5000.25,"size":2}}}]}},{"e":"chart","d":{"charts":[{"id":9,"eoh":true}]}}]"#,
+            r#"a[{"e":"md","d":{"quotes":[{"timestamp":"2026-08-21T00:00:00Z","contractId":42,"entries":{"Trade":{"price":5000.25,"size":2}}}]}},{"e":"md","d":null}]"#,
         )
         .await;
     });
     let client = authenticated_client(&url, "access", None);
-    let config = RealtimeConfig::default()
-        .event_capacity(1)
-        .request_timeout(Duration::from_secs(1));
+    let config = RealtimeConfig::default().request_timeout(Duration::from_secs(1));
     let mut connection = connect(&client, SocketKind::User, config).await;
 
-    assert!(connection.recv_event().await.is_some());
+    assert!(matches!(
+        connection
+            .recv_event()
+            .await
+            .map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::User(UserStreamEvent::Bootstrap(_)))
+    ));
+    assert!(matches!(
+        connection
+            .recv_event()
+            .await
+            .map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::MarketData(_))
+    ));
     assert!(
         matches!(connection.recv_event().await.map(RealtimeEvent::into_payload),
         Some(RealtimeEventPayload::ContinuityGap(gap))
-            if gap.reason() == ResyncReason::EventBufferOverflow)
+            if gap.reason() == ResyncReason::MalformedRecord)
     );
     assert!(matches!(
         connection

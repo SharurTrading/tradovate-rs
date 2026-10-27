@@ -142,7 +142,6 @@ fn burst_capacities_are_independent_of_payload_ceilings() {
         RealtimeConfig::default()
             .command_capacity(8_192)
             .max_pending_requests(8_192)
-            .event_capacity(65_536)
             .validate()
             .is_ok()
     );

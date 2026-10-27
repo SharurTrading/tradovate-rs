@@ -17,21 +17,19 @@ use crate::realtime::bounded::{self, BoundedMap, BoundedVec, DecodeError};
 use crate::realtime::{ProviderCode, RealtimeError, RealtimeEventKind, RealtimePayloadError};
 use crate::{ContractId, Decimal};
 
-const MAX_QUOTES: usize = 4_096;
-pub(super) const MAX_QUOTE_ENTRIES: usize = 64;
-const MAX_DOM_PACKETS: usize = 4_096;
-const MAX_DEPTH_LEVELS: usize = 16_384;
-const MAX_HISTOGRAMS: usize = 4_096;
-const MAX_HISTOGRAM_ITEMS: usize = 65_536;
+/// Every decoded market-data collection shares one caller-tunable
+/// hostile-input guard; live decoding installs the caller's configured
+/// `max_collection_entries` instead of this fallback.
+const LIMIT: usize = bounded::DEFAULT_COLLECTION_LIMIT;
 
 #[derive(Deserialize)]
 struct WireEvent {
     #[serde(default)]
-    quotes: BoundedVec<WireQuote, MAX_QUOTES>,
+    quotes: BoundedVec<WireQuote, LIMIT>,
     #[serde(default)]
-    doms: BoundedVec<WireDepth, MAX_DOM_PACKETS>,
+    doms: BoundedVec<WireDepth, LIMIT>,
     #[serde(default)]
-    histograms: BoundedVec<WireHistogram, MAX_HISTOGRAMS>,
+    histograms: BoundedVec<WireHistogram, LIMIT>,
 }
 
 #[derive(Deserialize)]
@@ -39,7 +37,7 @@ struct WireEvent {
 struct WireQuote {
     timestamp: Timestamp,
     contract_id: ContractId,
-    entries: BoundedMap<String, WireQuoteEntry, MAX_QUOTE_ENTRIES>,
+    entries: BoundedMap<String, WireQuoteEntry, LIMIT>,
 }
 
 #[derive(Deserialize)]
@@ -55,8 +53,8 @@ struct WireQuoteEntry {
 struct WireDepth {
     contract_id: ContractId,
     timestamp: Timestamp,
-    bids: BoundedVec<WireDepthLevel, MAX_DEPTH_LEVELS>,
-    offers: BoundedVec<WireDepthLevel, MAX_DEPTH_LEVELS>,
+    bids: BoundedVec<WireDepthLevel, LIMIT>,
+    offers: BoundedVec<WireDepthLevel, LIMIT>,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -75,7 +73,7 @@ struct WireHistogram {
     trade_date: WireTradeDate,
     #[serde(with = "crate::decimal")]
     base: Decimal,
-    items: BoundedMap<String, ExactDecimal, MAX_HISTOGRAM_ITEMS>,
+    items: BoundedMap<String, ExactDecimal, LIMIT>,
     refresh: bool,
 }
 

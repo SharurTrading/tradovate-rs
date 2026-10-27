@@ -12,16 +12,17 @@ use super::{
 };
 use crate::Decimal;
 use crate::realtime::bounded::{self, BoundedVec, DecodeError};
+
+/// Every decoded chart collection shares one caller-tunable hostile-input
+/// guard; live decoding installs the caller's configured
+/// `max_collection_entries` instead of this fallback.
+const LIMIT: usize = bounded::DEFAULT_COLLECTION_LIMIT;
 use crate::realtime::market_data::TradeDate;
 use crate::realtime::{ProviderCode, RealtimeError, RealtimeEventKind, RealtimePayloadError};
 
-pub(super) const MAX_PACKETS: usize = 4_096;
-const MAX_BARS_PER_PACKET: usize = 65_536;
-const MAX_TICKS_PER_PACKET: usize = 65_536;
-
 #[derive(Deserialize)]
 struct WireEvent {
-    charts: BoundedVec<Box<RawValue>, MAX_PACKETS>,
+    charts: BoundedVec<Box<RawValue>, LIMIT>,
 }
 
 #[derive(Deserialize)]
@@ -39,7 +40,7 @@ struct PacketHeader {
 struct WireBarPacket {
     id: i64,
     td: i64,
-    bars: BoundedVec<WireBar, MAX_BARS_PER_PACKET>,
+    bars: BoundedVec<WireBar, LIMIT>,
 }
 
 #[derive(Deserialize)]
@@ -77,7 +78,7 @@ struct WireTickPacket {
     bt: i64,
     #[serde(with = "crate::decimal")]
     ts: Decimal,
-    tks: BoundedVec<WireTick, MAX_TICKS_PER_PACKET>,
+    tks: BoundedVec<WireTick, LIMIT>,
 }
 
 #[derive(Clone, Copy, Deserialize)]

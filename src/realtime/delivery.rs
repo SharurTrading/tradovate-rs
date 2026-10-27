@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Kevin Monaghan
 // SPDX-License-Identifier: MIT-0
 
-//! One generation's accepted event prefix and independently retained boundaries.
+//! One generation's accepted venue-event retention and lifecycle evidence.
+//!
+//! Accepted venue events are retained in source order without an event-count
+//! cutoff: a slow consumer observes lag, never a locally fabricated gap. Only
+//! genuine loss (malformed or unrepresentable records) fences publication with
+//! a continuity marker after the accepted prefix. Retained-event memory is
+//! bounded by the provider's own sending rate while the consumer stays parked;
+//! outbound work remains separately bounded (`TV-PAT-BOUNDS-01`).
 
 use std::collections::VecDeque;
 
@@ -35,32 +42,42 @@ impl ContinuityGap {
     }
 }
 
+struct Retained {
+    accepted_at: std::time::Instant,
+    event: RealtimeEvent,
+}
+
+/// A graceful-shutdown notice retained at its ordered position.
+struct Notice {
+    before: usize,
+    clean: bool,
+    event: RealtimeEvent,
+}
+
 struct Queue {
-    events: VecDeque<RealtimeEvent>,
+    events: VecDeque<Retained>,
+    notices: VecDeque<Notice>,
     gap: Option<(ContinuityGap, bool)>,
     next_gap: u64,
-    shutdown: Option<(usize, bool, RealtimeEvent)>,
     ended: Option<Result<(), RealtimeError>>,
     end_delivered: bool,
 }
 
 pub(super) struct Delivery {
     connection_id: ConnectionId,
-    capacity: usize,
     queue: Mutex<Queue>,
     changed: Notify,
 }
 
 impl Delivery {
-    pub(super) fn new(connection_id: ConnectionId, capacity: usize) -> Self {
+    pub(super) fn new(connection_id: ConnectionId) -> Self {
         Self {
             connection_id,
-            capacity,
             queue: Mutex::new(Queue {
                 events: VecDeque::new(),
+                notices: VecDeque::new(),
                 gap: None,
                 next_gap: 1,
-                shutdown: None,
                 ended: None,
                 end_delivered: false,
             }),
@@ -83,33 +100,27 @@ impl Delivery {
             return;
         }
         if matches!(payload, RealtimeEventPayload::Shutdown(_)) {
-            if queue.shutdown.is_none() {
-                queue.shutdown = Some((
-                    queue.events.len(),
-                    queue.gap.is_none(),
-                    RealtimeEvent::new(self.connection_id, payload),
-                ));
-            } else {
-                // Retain the first close notice. Additional notices cannot grow
-                // an unbounded lifecycle queue; signal lost semantics explicitly.
-                self.install_gap(&mut queue, ResyncReason::EventBufferOverflow);
-            }
+            // Every notice is accepted provider evidence. Each is retained once
+            // at its ordered position; none displaces retained venue data.
+            let notice = Notice {
+                before: queue.events.len(),
+                clean: queue.gap.is_none(),
+                event: RealtimeEvent::new(self.connection_id, payload),
+            };
+            queue.notices.push_back(notice);
             self.changed.notify_one();
             return;
         }
         if epoch != Some(queue.next_gap) || queue.gap.is_some() || queue.ended.is_some() {
             return;
         }
-        if queue.events.len() == self.capacity {
-            self.install_gap(&mut queue, ResyncReason::EventBufferOverflow);
-        } else {
-            let unsupported = payload.requires_resync();
-            queue
-                .events
-                .push_back(RealtimeEvent::new(self.connection_id, payload));
-            if unsupported {
-                self.install_gap(&mut queue, ResyncReason::UnsupportedEvent);
-            }
+        let unsupported = payload.requires_resync();
+        queue.events.push_back(Retained {
+            accepted_at: std::time::Instant::now(),
+            event: RealtimeEvent::new(self.connection_id, payload),
+        });
+        if unsupported {
+            self.install_gap(&mut queue, ResyncReason::UnsupportedEvent);
         }
         self.changed.notify_one();
     }
@@ -152,6 +163,19 @@ impl Delivery {
         false
     }
 
+    /// Observes retained venue-event lag without consuming events. Lifecycle
+    /// evidence (notices, markers, generation end) is not backlog: depth counts
+    /// accepted venue events awaiting delivery, and the oldest-event age is how
+    /// long the oldest such event has waited.
+    pub(super) fn backlog(&self) -> super::EventBacklog {
+        let queue = self.queue.lock();
+        let oldest = queue.events.front().map(|retained| retained.accepted_at);
+        super::EventBacklog::new(
+            queue.events.len(),
+            oldest.map(|accepted_at| accepted_at.elapsed()),
+        )
+    }
+
     /// Called only after both socket halves and their pending producers are dropped.
     pub(super) fn end(&self, result: Result<(), RealtimeError>) {
         self.end_if_absent(result);
@@ -180,17 +204,17 @@ impl Delivery {
             {
                 let mut queue = self.queue.lock();
                 if queue
-                    .shutdown
-                    .as_ref()
-                    .is_some_and(|(before, before_gap, _)| *before == 0 && *before_gap)
+                    .notices
+                    .front()
+                    .is_some_and(|notice| notice.before == 0 && notice.clean)
                 {
-                    return queue.shutdown.take().map(|(_, _, event)| event);
+                    return queue.notices.pop_front().map(|notice| notice.event);
                 }
-                if let Some(event) = queue.events.pop_front() {
-                    if let Some((before, _, _)) = &mut queue.shutdown {
-                        *before = before.saturating_sub(1);
+                if let Some(retained) = queue.events.pop_front() {
+                    if let Some(notice) = queue.notices.front_mut() {
+                        notice.before = notice.before.saturating_sub(1);
                     }
-                    return Some(event);
+                    return Some(retained.event);
                 }
                 if let Some((gap, delivered)) = &mut queue.gap
                     && !*delivered
@@ -201,8 +225,8 @@ impl Delivery {
                         RealtimeEventPayload::ContinuityGap(*gap),
                     ));
                 }
-                if let Some((_, _, event)) = queue.shutdown.take() {
-                    return Some(event);
+                if let Some(notice) = queue.notices.pop_front() {
+                    return Some(notice.event);
                 }
                 if let Some(result) = queue.ended {
                     if queue.end_delivered {
@@ -239,47 +263,74 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn saturated_lifecycle_notices_preserve_prefix_gap_and_exactly_one_end() {
-        for notice_before_gap in [false, true] {
-            let delivery = Delivery::new(ConnectionId::new(1), 1);
+    async fn retained_events_have_no_count_cutoff_and_report_backlog() {
+        const COUNT: usize = 1_000;
+        let delivery = Delivery::new(ConnectionId::new(1));
+        for _ in 0..COUNT {
             delivery.publish(accepted_fixture());
-            if notice_before_gap {
-                delivery.publish(shutdown_fixture());
-                // A second retained notice installs loss rather than growing memory.
-                delivery.publish(shutdown_fixture());
-            } else {
-                delivery.publish(accepted_fixture());
-                delivery.publish(shutdown_fixture());
-            }
-            delivery.end(Err(RealtimeError::ServerClosed));
+        }
+        let backlog = delivery.backlog();
+        assert_eq!(backlog.depth(), COUNT);
+        assert!(backlog.oldest_event_age().is_some());
+        for _ in 0..COUNT {
             assert!(matches!(
                 delivery.recv().await.map(RealtimeEvent::into_payload),
                 Some(RealtimeEventPayload::UnmatchedResponse(_))
             ));
-            let first = delivery.recv().await.map(RealtimeEvent::into_payload);
-            let second = delivery.recv().await.map(RealtimeEvent::into_payload);
-            let (notice, gap) = if notice_before_gap {
-                (first, second)
-            } else {
-                (second, first)
-            };
-            assert!(matches!(notice, Some(RealtimeEventPayload::Shutdown(_))));
-            assert!(
-                matches!(gap, Some(RealtimeEventPayload::ContinuityGap(gap)) if gap.reason() == ResyncReason::EventBufferOverflow)
-            );
-            assert!(matches!(
-                delivery.recv().await.map(RealtimeEvent::into_payload),
-                Some(RealtimeEventPayload::GenerationEnded(Err(
-                    RealtimeError::ServerClosed
-                )))
-            ));
-            assert!(delivery.recv().await.is_none());
         }
+        let drained = delivery.backlog();
+        assert_eq!(drained.depth(), 0);
+        assert_eq!(drained.oldest_event_age(), None);
+        delivery.end(Ok(()));
+        assert!(matches!(
+            delivery.recv().await.map(RealtimeEvent::into_payload),
+            Some(RealtimeEventPayload::GenerationEnded(Ok(())))
+        ));
+        assert!(delivery.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn lifecycle_notices_keep_prefix_order_and_exactly_one_end() {
+        let delivery = Delivery::new(ConnectionId::new(1));
+        delivery.publish(accepted_fixture());
+        delivery.publish(shutdown_fixture());
+        // Data accepted after a notice stays behind it in source order.
+        delivery.publish(accepted_fixture());
+        delivery.publish(shutdown_fixture());
+        delivery.gap(ResyncReason::MalformedRecord);
+        delivery.end(Err(RealtimeError::ServerClosed));
+        assert!(matches!(
+            delivery.recv().await.map(RealtimeEvent::into_payload),
+            Some(RealtimeEventPayload::UnmatchedResponse(_))
+        ));
+        assert!(matches!(
+            delivery.recv().await.map(RealtimeEvent::into_payload),
+            Some(RealtimeEventPayload::Shutdown(_))
+        ));
+        assert!(matches!(
+            delivery.recv().await.map(RealtimeEvent::into_payload),
+            Some(RealtimeEventPayload::UnmatchedResponse(_))
+        ));
+        assert!(matches!(
+            delivery.recv().await.map(RealtimeEvent::into_payload),
+            Some(RealtimeEventPayload::ContinuityGap(_))
+        ));
+        assert!(matches!(
+            delivery.recv().await.map(RealtimeEvent::into_payload),
+            Some(RealtimeEventPayload::Shutdown(_))
+        ));
+        assert!(matches!(
+            delivery.recv().await.map(RealtimeEvent::into_payload),
+            Some(RealtimeEventPayload::GenerationEnded(Err(
+                RealtimeError::ServerClosed
+            )))
+        ));
+        assert!(delivery.recv().await.is_none());
     }
 
     #[tokio::test]
     async fn acknowledgement_rejects_stale_producers_and_markers() {
-        let delivery = Delivery::new(ConnectionId::new(1), 1);
+        let delivery = Delivery::new(ConnectionId::new(1));
         let before_gap = delivery.epoch();
         delivery.gap(ResyncReason::MalformedRecord);
         let Some(event) = delivery.recv().await else {
@@ -300,7 +351,7 @@ mod tests {
             )),
         );
         assert!(delivery.queue.lock().events.is_empty());
-        delivery.gap(ResyncReason::EventBufferOverflow);
+        delivery.gap(ResyncReason::ConnectionLost);
         assert!(!delivery.acknowledge(first));
         let second = delivery.queue.lock().gap.map(|(gap, _)| gap);
         assert!(

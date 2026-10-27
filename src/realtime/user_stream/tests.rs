@@ -152,14 +152,31 @@ fn props_accepts_singleton_and_batch_wrappers_with_typed_entities() {
 }
 
 #[test]
+fn props_events_above_the_former_fixed_cap_decode_fully() {
+    let events = (0..4_100)
+        .map(|index| format!(r#"{{"entityType":"future{index}","eventType":"F","entity":{{}}}}"#))
+        .collect::<Vec<_>>()
+        .join(",");
+    let raw = raw(&format!(r"[{events}]"));
+
+    let decoded = decode::properties(Some(&raw));
+    let Ok(UserStreamEvent::Properties(events)) = decoded else {
+        panic!("4,100 props events exceed the former fixed cap and must decode");
+    };
+    assert_eq!(events.len(), 4_100);
+}
+
+#[test]
 fn malformed_props_never_becomes_an_untyped_public_event() {
     let raw = raw(r#"{"entityType":"order","eventType":"Updated"}"#);
     assert!(decode::properties(Some(&raw)).is_err());
 }
 
 #[test]
-fn oversized_bootstrap_object_is_a_typed_limit_failure() {
-    let optional = (0..(super::decode::MAX_BOOTSTRAP_COLLECTIONS - 1))
+fn bootstrap_collections_above_the_former_fixed_cap_decode_fully() {
+    // The two pinned collections plus 128 future families: 130 collections
+    // exceed the former fixed bootstrap cap and every collection still decodes.
+    let optional = (0..128)
         .map(|index| format!(r#""future{index}":[]"#))
         .collect::<Vec<_>>()
         .join(",");
@@ -177,8 +194,32 @@ fn oversized_bootstrap_object_is_a_typed_limit_failure() {
         panic!("fixture must contain a response");
     };
 
+    let decoded = decode::bootstrap(&response);
+    let Ok(UserStreamEvent::Bootstrap(bootstrap)) = decoded else {
+        panic!("130 bootstrap collections must decode");
+    };
+    assert_eq!(bootstrap.entities().len(), 130);
+}
+
+#[test]
+fn configured_bootstrap_collection_bound_is_a_typed_limit_failure() {
+    let payload = r#"{"users":[],"contractGroups":[],"futureA":[],"futureB":[]}"#;
+    let frame_payload = format!(r#"a[{{"i":2,"s":200,"d":{payload}}}]"#);
+    let codec = FrameCodec::new(frame_payload.len(), 4);
+    let Ok(codec) = codec else {
+        panic!("fixture codec must validate");
+    };
+    let frame = codec.decode(&frame_payload);
+    let Ok(ServerFrame::Messages(mut messages)) = frame else {
+        panic!("fixture response must decode");
+    };
+    let Some(ServerMessage::Response(response)) = messages.pop() else {
+        panic!("fixture must contain a response");
+    };
+
+    let decoded = crate::realtime::bounded::with_limit(3, || decode::bootstrap(&response));
     assert!(matches!(
-        decode::bootstrap(&response),
+        decoded,
         Err(RealtimeError::InvalidEvent {
             reason: RealtimePayloadError::LimitExceeded,
             ..

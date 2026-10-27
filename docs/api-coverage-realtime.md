@@ -16,7 +16,10 @@ Status: production-public typed coverage with explicit documentation boundaries.
 
 ## Executive result
 
-The crate exposes a production-public, bounded, generation-fenced realtime API.
+The crate exposes a production-public, generation-fenced realtime API. Accepted
+inbound venue events are retained in source order without an event-count cutoff;
+outbound commands, pending requests, frames, and decoded collections stay bounded
+with typed refusal.
 Downstream callers can establish user, market-data, and replay socket generations;
 observe typed lifecycle state; receive typed user bootstrap and `props` events;
 subscribe to quotes, depth, and histograms; request and cancel charts; and consume
@@ -82,8 +85,10 @@ canonical desired-subscription set, account projection, order mirror, or replay
 session. After a `ContinuityGap`, install snapshot/reconciliation recovery and call
 `acknowledge_continuity_gap` with the exact received marker. The accepted event prefix
 precedes the gap, and stale markers or buffered records cannot reopen an old boundary.
-Replies and keepalives remain available throughout. Unknown subscription outcomes
-remain caller-owned; timeout/cancellation does not prove unsubscribe/reset success.
+Replies and keepalives remain available throughout. `RealtimeConnection::backlog`
+observes retained-event depth and oldest-event age as lag; lag alone never installs
+a gap. Unknown subscription outcomes remain caller-owned; timeout/cancellation does
+not prove unsubscribe/reset success.
 
 After actual transport loss, the ordered tail retains `GenerationEnded` with the exact
 error. Both socket halves have stopped before that evidence. `RealtimeSession::wait_ended`
@@ -209,7 +214,8 @@ Credential-free tests cover:
 - open, authorization, user bootstrap, staged-delta, ready, shutdown, and recovery
   ordering;
 - token rejection, expiry/revision fences, penalties, `429`, timeouts, cancellation,
-  late responses, queue overflow, liveness, and heartbeat backpressure;
+  late responses, retained-backlog lag observability, record/frame ceilings, liveness,
+  and heartbeat backpressure;
 - SockJS-derived frames, correlated/batched messages, malformed input, byte/count
   ceilings, and unknown events;
 - all 31 pinned bootstrap collections, required-field rejection, one/many typed

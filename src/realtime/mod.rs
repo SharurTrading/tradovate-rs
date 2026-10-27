@@ -45,7 +45,8 @@ pub use market_data::{
 };
 pub use session::RealtimeSession;
 pub use types::{
-    ConnectionId, DisconnectReason, RealtimeEvent, RealtimeState, ResyncReason, SocketKind,
+    ConnectionId, DisconnectReason, EventBacklog, RealtimeEvent, RealtimeState, ResyncReason,
+    SocketKind,
 };
 pub use user_stream::{
     PropertyEvent, PropertyEventType, UserBootstrap, UserEntityBatch, UserStreamEvent,
