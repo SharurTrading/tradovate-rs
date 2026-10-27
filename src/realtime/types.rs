@@ -69,6 +69,9 @@ pub enum DisconnectReason {
 pub enum ResyncReason {
     /// An application record could not be decoded; the transport remains active.
     MalformedRecord,
+    /// The retained close-notice point filled before the consumer drained it;
+    /// additional provider shutdown notices were refused with this marker.
+    EventBufferOverflow,
     /// The active transport ended unexpectedly, leaving an unknown event gap.
     ConnectionLost,
     /// A caller abandoned an admitted request before observing its outcome.

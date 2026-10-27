@@ -5,10 +5,12 @@
 //!
 //! Accepted venue events are retained in source order without an event-count
 //! cutoff: a slow consumer observes lag, never a locally fabricated gap. Only
-//! genuine loss (malformed or unrepresentable records) fences publication with
-//! a continuity marker after the accepted prefix. Retained-event memory is
-//! bounded by the provider's own sending rate while the consumer stays parked;
-//! outbound work remains separately bounded (`TV-PAT-BOUNDS-01`).
+//! genuine loss fences publication with a continuity marker after the accepted
+//! prefix: malformed or unrepresentable records, and close notices beyond the
+//! retained first, whose lifecycle-evidence point stays bounded instead of
+//! growing without a named limit. Retained-event memory is bounded by the
+//! provider's own sending rate while the consumer stays parked; the notice
+//! point and outbound work remain separately bounded (`TV-PAT-BOUNDS-01`).
 
 use std::collections::VecDeque;
 
@@ -100,14 +102,24 @@ impl Delivery {
             return;
         }
         if matches!(payload, RealtimeEventPayload::Shutdown(_)) {
-            // Every notice is accepted provider evidence. Each is retained once
-            // at its ordered position; none displaces retained venue data.
-            let notice = Notice {
-                before: queue.events.len(),
-                clean: queue.gap.is_none(),
-                event: RealtimeEvent::new(self.connection_id, payload),
-            };
-            queue.notices.push_back(notice);
+            if queue.notices.is_empty() {
+                // The first close notice is accepted provider evidence,
+                // retained once at its ordered position; it never displaces
+                // retained venue data.
+                let notice = Notice {
+                    before: queue.events.len(),
+                    clean: queue.gap.is_none(),
+                    event: RealtimeEvent::new(self.connection_id, payload),
+                };
+                queue.notices.push_back(notice);
+            } else {
+                // Retain the first close notice. The lifecycle-notice point is
+                // bounded, so additional notices cannot grow an unbounded
+                // evidence queue: their loss installs an explicit marker
+                // (issue #50) instead of a silent drop. A marker already
+                // pending covers notice loss until it is acknowledged.
+                self.install_gap(&mut queue, ResyncReason::EventBufferOverflow);
+            }
             self.changed.notify_one();
             return;
         }
