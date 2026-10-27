@@ -94,7 +94,12 @@ pub(super) async fn establish(input: EstablishInput<'_>) -> Result<Established, 
     .await?;
     let mut heartbeat_deadline = next_heartbeat_deadline()?;
     let mut heartbeat = time::interval_at(heartbeat_deadline, HEARTBEAT_PERIOD);
-    heartbeat.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+    // The provider closes sockets idle beyond one heartbeat period, so a tick
+    // missed while the loop was stalled must fire the moment the loop resumes
+    // instead of realigning to the next fixed boundary: Skip would allow an
+    // inter-heartbeat gap approaching two periods where Burst's catch-up keeps
+    // it no worse than the stall itself.
+    heartbeat.set_missed_tick_behavior(time::MissedTickBehavior::Burst);
     if !authorization.store.is_current(authorization.snapshot) {
         return Err(RealtimeError::Unauthenticated);
     }

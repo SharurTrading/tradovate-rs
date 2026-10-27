@@ -256,6 +256,68 @@ async fn heartbeat_runs_without_application_traffic() {
 }
 
 #[tokio::test]
+async fn heartbeat_continues_while_the_server_streams_without_idling() {
+    // The provider sends no heartbeats of its own while actively streaming, so
+    // inbound traffic must neither reset nor starve the client's schedule:
+    // the `[]` frame still arrives inside one period while frames keep flowing.
+    const ORDER_UPDATE: &str = r#"a[{"e":"props","d":{"entityType":"order","eventType":"Updated","entity":{"id":10,"accountId":20,"contractId":30,"timestamp":"2026-08-21T00:00:00Z","action":"Buy","ordStatus":"Working","admin":false}}}"#;
+    let (listener, url) = bind().await;
+    let server = tokio::spawn(async move {
+        let mut socket = accept(listener).await;
+        authorize(&mut socket).await;
+        // Stream for ~4.5s and poll between sends, so a heartbeat is observed
+        // at the moment it interleaves with active traffic rather than read
+        // later from a socket buffer after the stream ends.
+        let mut saw_heartbeat = false;
+        for frame in 0..30u32 {
+            send_text(&mut socket, ORDER_UPDATE).await;
+            if let Ok(text) =
+                time::timeout(Duration::from_millis(150), next_text(&mut socket)).await
+            {
+                assert_eq!(text, "[]", "only the heartbeat may arrive from the client");
+                assert!(
+                    frame < 28,
+                    "heartbeat arrived only after streaming was effectively over"
+                );
+                saw_heartbeat = true;
+                break;
+            }
+        }
+        assert!(
+            saw_heartbeat,
+            "heartbeat must arrive while the server streams"
+        );
+        expect_close(&mut socket).await;
+    });
+    let client = authenticated_client(&url, "access", None);
+    let config = RealtimeConfig::default()
+        .request_timeout(Duration::from_secs(4))
+        .liveness_timeout(Duration::from_secs(8));
+    let mut connection = connect(&client, SocketKind::User, config).await;
+
+    assert!(matches!(
+        connection
+            .recv_event()
+            .await
+            .map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::User(UserStreamEvent::Bootstrap(_)))
+    ));
+    // Consume the stream so inbound traffic flows continuously; the heartbeat
+    // assertion lives on the server side, which observes both directions. The
+    // drain window keeps shutdown inside expect_close's one-second deadline
+    // after the server breaks on the heartbeat it catches near 2.5s.
+    let stream_deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while std::time::Instant::now() < stream_deadline {
+        let event = time::timeout(Duration::from_millis(250), connection.recv_event()).await;
+        if matches!(event, Ok(None)) {
+            break;
+        }
+    }
+    assert!(connection.shutdown().await.is_ok());
+    join(server).await;
+}
+
+#[tokio::test]
 async fn documentation_blocked_replay_clock_retains_a_gap() {
     let (listener, url) = bind().await;
     let server = tokio::spawn(async move {
