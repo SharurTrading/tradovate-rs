@@ -12,13 +12,13 @@ use super::{
 };
 use crate::Decimal;
 use crate::realtime::bounded::{self, BoundedVec, DecodeError};
+use crate::realtime::market_data::TradeDate;
+use crate::realtime::{ProviderCode, RealtimeError, RealtimeEventKind, RealtimePayloadError};
 
 /// Every decoded chart collection shares one caller-tunable hostile-input
 /// guard; live decoding installs the caller's configured
 /// `max_collection_entries` instead of this fallback.
 const LIMIT: usize = bounded::DEFAULT_COLLECTION_LIMIT;
-use crate::realtime::market_data::TradeDate;
-use crate::realtime::{ProviderCode, RealtimeError, RealtimeEventKind, RealtimePayloadError};
 
 #[derive(Deserialize)]
 struct WireEvent {

@@ -78,9 +78,11 @@ impl RealtimeConnection {
         Ok(*self.state.borrow_and_update())
     }
 
-    /// Receives the next bounded unsolicited server item.
+    /// Receives the next unsolicited server item.
     ///
-    /// `None` means the actor has stopped. Inspect [`Self::state`] for the
+    /// Accepted venue events are retained in source order until received;
+    /// see [`Self::backlog`] for lag observation. `None` means the actor has
+    /// stopped. Inspect [`Self::state`] for the
     /// terminal category. Accepted events precede retained continuity gaps and
     /// generation-ended evidence. A gap fences data, not requests or keepalives;
     /// acknowledge it only after installing recovery. Replacements are caller-owned.
