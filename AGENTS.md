@@ -55,7 +55,7 @@ Review severities:
 | **TV-EXEC-01** | Money-moving mutations are never automatically retried, including by HTTP dependency defaults; the shared client must configure `reqwest::retry::never()`. Cancellation or failure after possible admission is an explicit ambiguous outcome and installs a reconciliation-required latch shared by client clones. Queries remain available; mutations resume only after the caller explicitly acknowledges authoritative provider-state reconciliation. Only proven pre-send failures may be classified as not sent. |
 | **TV-RATE-01** | Provider rate budgets and cooldowns are shared across client clones. Every outbound attempt receives admission. Queries may wait asynchronously; mutations fail locally before transmission when immediate capacity is unavailable. Provider `429` handling never makes a mutation automatically retryable. |
 | **TV-PENALTY-01** | Tradovate penalty-ticket bodies are control responses even when HTTP status is 200. The client enforces `p-time` with a monotonic deadline and correlates `p-ticket` to one client instance, endpoint, exact serialized original safe request, and single claim. `p-captcha` requires operator action. Mutation penalty handling never bypasses `TV-EXEC-01`. |
-| **TV-TRANSPORT-01** | Realtime connections authenticate and validate their protocol handshake before readiness. Frames, messages, queues, pending requests, and decoded-event memory are bounded. Lifecycle publication is generation-fenced; one half failing tears down the whole session. |
+| **TV-TRANSPORT-01** | Realtime connections authenticate and validate their protocol handshake before readiness. Frame bytes and records per frame, outbound commands, pending requests, and decoded-collection memory keep named limits with typed refusal; accepted inbound venue events are retained in source order without an event-count cutoff. Lifecycle publication is generation-fenced; one half failing tears down the whole session. |
 | **TV-SUBSCRIPTION-01** | Realtime transport owns no canonical subscription or projection truth. Reconnect and transport-gap events tell the caller when to replay its idempotent subscription set and perform snapshot-before-delta recovery. |
 | **TV-SYNC-01** | A user socket sends exactly one `user/syncrequest` per authenticated connection generation. A penalty installs the full monotonic cooldown and ends setup; the crate does not retry user synchronization automatically. Its initial entities are a snapshot followed by `props` deltas with an explicit resync path; the transport does not publish a delta stream as complete truth before bootstrap succeeds. |
 | **TV-AUTOMATION-01** | Automated order builders require the caller to make automated origin explicit and transmit the provider-required `isAutomated` value. The library does not silently default an automated client to manual order origin. |
@@ -269,7 +269,7 @@ Split crates only when a real ownership, dependency, trust, or runtime boundary 
 | **TV-PAT-CQS-01** | Query execution and mutation execution are separate policy paths. Retry, rate admission, cancellation, and error classification must make the distinction visible. |
 | **TV-PAT-STATE-01** | Mutable session and connection truth has one writer. Readers receive owned snapshots or events; stale work is rejected by revision/generation checks. |
 | **TV-PAT-RAII-01** | Attempt, connection, subscription-invocation, and background-task guards make cleanup and cancellation explicit. Every spawned task has a cancellation mechanism and tracked teardown; dropping a `JoinHandle` is not cancellation. |
-| **TV-PAT-BOUNDS-01** | All remote-input and live-path buffers have named limits and explicit overflow behavior. Continuing after a dropped realtime update is prohibited unless the caller performs explicit recovery. |
+| **TV-PAT-BOUNDS-01** | Outbound and control-path buffers have named limits with explicit typed refusal; accepted inbound venue events are retained in source order without an event-count cutoff, and genuine loss installs an explicit continuity marker. Continuing after a dropped realtime update is prohibited unless the caller performs explicit recovery. |
 | **TV-PAT-BUILDER-01** | Use a validated builder when optional configuration exceeds two fields or construction has cross-field invariants. Builders are `#[must_use]`; invalid intermediate values never reach transport. |
 | **TV-PAT-NEWTYPE-01** | Public provider IDs and invariant-bearing scalar values have private fields, validated constructors/parsers, and validating Serde implementations. |
 | **TV-PAT-ERROR-01** | Library failures use focused `thiserror` enums with sources and public-safe context. Expected remote or input failures return `Result`; they do not panic. |
@@ -335,11 +335,13 @@ Split crates only when a real ownership, dependency, trust, or runtime boundary 
 9. If a request may have been admitted but its completion is lost, retain an unknown
    outcome without resending or reusing its identity. Cancel only its wait; preserve
    the socket and unrelated operations.
-10. On event overflow or malformed application records, fence data publication and
-   retain a nonterminal continuity gap after the accepted event prefix. Keep replies
-   and keepalives running. Resume only after the consumer installs its recovery
-   boundary and acknowledges the exact delivered marker; stale buffered records
-   must not cross that boundary. Retain terminal evidence after the ordered gap.
+10. On a malformed or unrepresentable application record, fence data publication
+   and retain a nonterminal continuity gap after the accepted event prefix.
+   Accepted venue events are never dropped for local queue pressure or age.
+   Keep replies and keepalives running. Resume only after the consumer installs
+   its recovery boundary and acknowledges the exact delivered marker; stale
+   buffered records must not cross that boundary. Retain terminal evidence
+   after the ordered gap.
 11. The library does not automatically reconnect. A caller-created replacement uses a
    fresh token snapshot, and the caller replays its canonical subscriptions; transport
    retains neither subscriptions nor a replay queue.
@@ -358,7 +360,7 @@ Split crates only when a real ownership, dependency, trust, or runtime boundary 
 | **TV-ANTI-SECRET-01** | Secret getters, derived `Debug` on secrets, token-bearing errors, persisted credentials, captured live payloads, or logging raw requests. |
 | **TV-ANTI-ENV-01** | Library-owned `.env` loading or ambient credential/proxy discovery. Callers inject secrets and explicit proxy configuration. |
 | **TV-ANTI-RETRY-01** | Generic middleware retrying mutations, retries that bypass admission, or treating cancellation as proof a request was not sent. |
-| **TV-ANTI-UNBOUNDED-01** | Unbounded response reads, channels, pending maps, frame aggregation, event queues, or reconnect loops. |
+| **TV-ANTI-UNBOUNDED-01** | Unbounded response reads, outbound command channels, pending maps, frame aggregation, or reconnect loops. Retained inbound venue events are data retention, not an unbounded control path; genuine loss must still surface as an explicit continuity marker (TV-PAT-BOUNDS-01). |
 | **TV-ANTI-LOCKAWAIT-01** | Holding any mutex/rwlock guard across `.await`. |
 | **TV-ANTI-HIDDENRT-01** | Creating or blocking a Tokio runtime inside the library. |
 | **TV-ANTI-TRUTH-01** | Realtime transport retaining canonical subscriptions, order state, positions, or account projections. |

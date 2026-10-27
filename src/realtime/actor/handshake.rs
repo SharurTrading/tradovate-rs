@@ -66,7 +66,6 @@ struct ResponseWait<'a> {
     deadline: time::Instant,
     timeout_error: RealtimeError,
     cancellation: &'a CancellationToken,
-    staged_limit: usize,
 }
 
 pub(super) async fn establish(input: EstablishInput<'_>) -> Result<Established, RealtimeError> {
@@ -118,12 +117,11 @@ pub(super) async fn establish(input: EstablishInput<'_>) -> Result<Established, 
         cancellation,
     )
     .await?;
+    // Events that arrive before their correlated response are staged and later
+    // published through the same retained-event delivery as post-ready data.
+    // Staging is bounded by the establishment deadline and per-frame decode
+    // limits, not by an event count; a stalled handshake fails its deadline.
     let mut staged = Vec::new();
-    let staged_limit = if matches!(kind, SocketKind::User) {
-        config.event_channel_capacity().saturating_sub(1)
-    } else {
-        config.event_channel_capacity()
-    };
     let authorization = wait_for_response(
         &mut socket,
         &mut heartbeat,
@@ -135,14 +133,13 @@ pub(super) async fn establish(input: EstablishInput<'_>) -> Result<Established, 
             deadline: authorization_deadline,
             timeout_error: RealtimeError::AuthorizationTimeout,
             cancellation,
-            staged_limit,
         },
         &mut staged,
     )
     .await?;
     validate_authorization(&authorization, rate_limits)?;
     let (bootstrap, next_request_id) = if matches!(kind, SocketKind::User) {
-        let wait = user_sync_wait(connection_id, codec, config, cancellation, staged_limit)?;
+        let wait = user_sync_wait(connection_id, codec, config, cancellation)?;
         let (bootstrap, next_request_id) = user_sync::perform(
             &mut socket,
             &mut heartbeat,
@@ -173,7 +170,6 @@ fn user_sync_wait(
     codec: FrameCodec,
     config: RealtimeConfig,
     cancellation: &CancellationToken,
-    staged_limit: usize,
 ) -> Result<ResponseWait<'_>, RealtimeError> {
     Ok(ResponseWait {
         connection_id,
@@ -182,7 +178,6 @@ fn user_sync_wait(
         deadline: deadline(config.request_deadline())?,
         timeout_error: RealtimeError::UserSyncTimeout,
         cancellation,
-        staged_limit,
     })
 }
 
@@ -256,13 +251,9 @@ async fn wait_for_response(
                 let message = socket_result(message)?;
                 match message {
                     Message::Text(text) => {
-                        if let Some(response) = correlated_response(
-                            wait.codec.decode(text.as_str())?,
-                            wait.request_id,
-                            wait.connection_id,
-                            wait.staged_limit,
-                            staged,
-                        )? {
+                        if let Some(response) =
+                            correlated_response(wait.codec.decode(text.as_str())?, wait.request_id, staged)?
+                        {
                             return Ok(response);
                         }
                     }
@@ -291,8 +282,6 @@ async fn wait_for_response(
 fn correlated_response(
     frame: ServerFrame,
     request_id: RequestId,
-    connection_id: ConnectionId,
-    staged_limit: usize,
     staged: &mut Vec<ServerMessage>,
 ) -> Result<Option<Response>, RealtimeError> {
     match frame {
@@ -307,15 +296,7 @@ fn correlated_response(
                         }
                         correlated = Some(response);
                     }
-                    message => {
-                        if staged.len() >= staged_limit {
-                            return Err(RealtimeError::ResyncRequired {
-                                connection_id,
-                                reason: crate::realtime::ResyncReason::EventBufferOverflow,
-                            });
-                        }
-                        staged.push(message);
-                    }
+                    message => staged.push(message),
                 }
             }
             Ok(correlated)

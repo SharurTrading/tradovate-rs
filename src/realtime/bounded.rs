@@ -10,6 +10,14 @@ use serde::{
     de::{DeserializeOwned, Error as _, IgnoredAny, MapAccess, SeqAccess, Visitor},
 };
 
+/// Fallback per-collection decode bound, equal to `RealtimeConfig`'s default
+/// `max_collection_entries`. Live decodes always run under the caller's
+/// configured limit via [`with_limit`]; this constant only fixes decoding with
+/// no configured context. It is a hostile-input amplification guard, not a
+/// documented provider quota: a genuinely oversized collection fails with an
+/// explicit typed limit error instead of growing without limit.
+pub(super) const DEFAULT_COLLECTION_LIMIT: usize = 65_536;
+
 // Serde derives do not carry decoder context. Scope the caller's validated
 // bound to one synchronous decode only; this function never awaits or spawns.
 // The RAII reset also restores nested contexts and unwinding on the same thread.

@@ -48,7 +48,7 @@ async fn cancelled_queue_admission_is_stale_and_retains_the_actual_terminal_erro
     let (commands, _receiver) = mpsc::channel(1);
     assert!(commands.try_send(command()).is_ok());
     let cancellation = CancellationToken::new();
-    let delivery = super::super::delivery::Delivery::new(connection_id, 1);
+    let delivery = super::super::delivery::Delivery::new(connection_id);
     let reserve = reserve_command_slot(
         &commands,
         &cancellation,
@@ -87,7 +87,7 @@ async fn dropping_connection_cancels_and_tracks_its_actor_task() {
 
     let connection_id = ConnectionId::new(99);
     let (commands, _command_receiver) = mpsc::channel(1);
-    let events = Arc::new(super::super::delivery::Delivery::new(connection_id, 1));
+    let events = Arc::new(super::super::delivery::Delivery::new(connection_id));
     let (_state_sender, state) = watch::channel(RealtimeState::Ready { connection_id });
     let codec = FrameCodec::new(128, 8);
     let Ok(codec) = codec else {

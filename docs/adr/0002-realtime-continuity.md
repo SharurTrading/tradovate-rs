@@ -7,6 +7,13 @@ SPDX-License-Identifier: MIT-0
 
 Status: proposed for 0.2.0; supersedes the recovery details in ADR 0001.
 Date: 2026-09-09.
+Amended 2026-10-27 (issue #24): delivery no longer bounds accepted venue events
+by count, so the retention paragraph below and the "Full queue" termination-site
+row describe the superseded 0.2 behavior. Since 0.3, accepted venue events are
+retained in source order without an event-count cutoff, `RealtimeConnection::backlog`
+exposes depth and oldest-event age as observable lag, gap fencing and terminal
+evidence ordering are unchanged, and genuine record loss remains the only local
+gap trigger; outbound command/pending admission stays bounded with typed refusal.
 
 ## Provider evidence and scope
 

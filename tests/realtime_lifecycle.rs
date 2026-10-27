@@ -24,14 +24,12 @@ async fn burst(active_consumer: bool, liveness: std::time::Duration) {
             .map(|id| format!(r#"{{"e":"chart","d":{{"charts":[{{"id":{id},"eoh":true}}]}}}}"#))
             .collect::<Vec<_>>()
             .join(",");
-        // A completion after the data must survive both saturation and decoding.
+        // A completion after the data must survive both buffering and decoding.
         send(&mut socket, &format!(r#"a[{records},{{"i":2,"s":200}}]"#)).await;
         assert!(sent.send(()).is_ok());
         closed(&mut socket).await;
     });
-    let config = RealtimeConfig::default()
-        .event_capacity(if active_consumer { 64 } else { EVENTS })
-        .liveness_timeout(liveness);
+    let config = RealtimeConfig::default().liveness_timeout(liveness);
     let mut connection = connect(&client, config).await;
     let generation = connection.connection_id();
     let session = connection.session();
@@ -42,7 +40,7 @@ async fn burst(active_consumer: bool, liveness: std::time::Duration) {
     });
     assert!(received.await.is_ok());
     if active_consumer {
-        drain_burst(&mut connection, generation).await;
+        drain_burst(&mut connection, generation, EVENTS).await;
     }
     // For a paused consumer this completion proves the entire burst was decoded
     // before draining, not merely copied into a kernel buffer.
@@ -53,7 +51,7 @@ async fn burst(active_consumer: bool, liveness: std::time::Duration) {
             .is_ok()
     );
     if !active_consumer {
-        drain_burst(&mut connection, generation).await;
+        drain_burst(&mut connection, generation, EVENTS).await;
     }
     assert!(connection.shutdown().await.is_ok());
     assert!(server.await.is_ok());
@@ -62,8 +60,9 @@ async fn burst(active_consumer: bool, liveness: std::time::Duration) {
 async fn drain_burst(
     connection: &mut tradovate_client::realtime::RealtimeConnection,
     generation: tradovate_client::realtime::ConnectionId,
+    total: usize,
 ) {
-    for expected in 1..=EVENTS {
+    for expected in 1..=total {
         let item = event(connection).await;
         assert_eq!(item.connection_id(), generation);
         let payload = item.into_payload();
@@ -83,13 +82,131 @@ async fn twenty_thousand_events_with_a_paused_consumer() {
 }
 
 #[tokio::test]
-async fn twenty_thousand_events_through_a_sixty_four_event_queue() {
+async fn twenty_thousand_events_through_a_concurrent_drain() {
     burst(true, std::time::Duration::from_secs(10)).await;
 }
 
 #[tokio::test]
 async fn buffered_burst_does_not_manufacture_a_failed_probe() {
     burst(true, std::time::Duration::from_millis(10)).await;
+}
+
+/// The former 65,536-event delivery capacity no longer exists. A receiver
+/// stalled across multiple frames past that count still drains every accepted
+/// event exactly once, in order, with no continuity gap and observable lag.
+#[tokio::test]
+async fn stalled_receiver_past_former_capacity_drains_every_event_in_order() {
+    const TOTAL: usize = 70_000;
+    const FIRST_FRAME: usize = 40_000;
+    let (client, listener) = fixture().await;
+    let (sent, received) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let mut socket = accept(&listener).await;
+        authorize(&mut socket).await;
+        let request = text(&mut socket).await;
+        assert!(request.starts_with("md/subscribeQuote\n2\n"));
+        // Two frames keep each under the per-frame record limit; together they
+        // exceed the former event-queue capacity.
+        for (start, end) in [(0, FIRST_FRAME), (FIRST_FRAME, TOTAL)] {
+            let records = (start..end)
+                .map(|id| {
+                    format!(
+                        r#"{{"e":"chart","d":{{"charts":[{{"id":{},"eoh":true}}]}}}}"#,
+                        { id + 1 }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            send(&mut socket, &format!(r"a[{records}]")).await;
+        }
+        send(&mut socket, r#"a[{"i":2,"s":200}]"#).await;
+        assert!(sent.send(()).is_ok());
+        closed(&mut socket).await;
+    });
+    let mut connection = connect(&client, RealtimeConfig::default()).await;
+    let generation = connection.connection_id();
+    let session = connection.session();
+    let request = tokio::spawn(async move {
+        session
+            .subscribe_market_data(MarketDataChannel::Quotes, &contract(42))
+            .await
+    });
+    assert!(received.await.is_ok());
+    // The completion can only resolve after every record of both frames was
+    // decoded, so the backlog observation below is deterministic.
+    assert!(
+        request
+            .await
+            .unwrap_or_else(|e| panic!("request join: {e}"))
+            .is_ok()
+    );
+    let stalled = connection.backlog();
+    assert_eq!(stalled.depth(), TOTAL);
+    assert!(stalled.oldest_event_age().is_some());
+    drain_burst(&mut connection, generation, TOTAL).await;
+    let drained = connection.backlog();
+    assert_eq!(drained.depth(), 0);
+    assert_eq!(drained.oldest_event_age(), None);
+    assert!(connection.shutdown().await.is_ok());
+    assert!(server.await.is_ok());
+}
+
+/// One bootstrap collection larger than every former fixed decoded-collection
+/// cap (16,384 entities) decodes fully, in order, through the public API.
+#[tokio::test]
+async fn bootstrap_larger_than_former_collection_caps_decodes_fully() {
+    use tradovate_client::realtime::{UserEntityBatch, UserStreamEvent, UserSyncConfig};
+    const ORDERS: i64 = 20_000;
+    let (client, listener) = fixture().await;
+    let server = tokio::spawn(async move {
+        let mut socket = accept(&listener).await;
+        authorize(&mut socket).await;
+        let sync = text(&mut socket).await;
+        assert!(sync.starts_with("user/syncrequest\n2\n\n"));
+        let orders = (1..=ORDERS)
+            .map(|id| {
+                format!(
+                    r#"{{"id":{id},"accountId":20,"timestamp":"2026-08-21T00:00:00Z","action":"Buy","ordStatus":"Working","admin":false}}"#
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        send(
+            &mut socket,
+            &format!(
+                r#"a[{{"i":2,"s":200,"d":{{"users":[],"contractGroups":[],"orders":[{orders}]}}}}]"#
+            ),
+        )
+        .await;
+        closed(&mut socket).await;
+    });
+    let mut connection = client
+        .connect_user_realtime(RealtimeConfig::default(), UserSyncConfig::default())
+        .await
+        .unwrap_or_else(|e| panic!("user connect: {e}"));
+    let payload = event(&mut connection).await.into_payload();
+    let RealtimeEventPayload::User(UserStreamEvent::Bootstrap(bootstrap)) = payload else {
+        panic!("expected bootstrap, got: {payload:?}");
+    };
+    let orders = bootstrap
+        .entities()
+        .iter()
+        .find_map(|batch| match batch {
+            UserEntityBatch::Orders(orders) => Some(orders),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("orders batch missing"));
+    assert_eq!(orders.len(), 20_000);
+    assert!(
+        orders
+            .first()
+            .is_some_and(|order| order.id().is_some_and(|id| id.get() == 1))
+            && orders
+                .last()
+                .is_some_and(|order| order.id().is_some_and(|id| id.get() == ORDERS))
+    );
+    assert!(connection.shutdown().await.is_ok());
+    assert!(server.await.is_ok());
 }
 
 #[tokio::test]
@@ -158,13 +275,16 @@ async fn three_thousand_concurrent_subscriptions_and_events() {
 }
 
 #[tokio::test]
-async fn overflow_delivers_prefix_gap_and_recovered_data_on_the_same_socket() {
+async fn continuity_gap_delivers_prefix_exactly_one_ack_and_recovered_data() {
     let (client, listener) = fixture().await;
     let server = tokio::spawn(async move {
         let mut socket = accept(&listener).await;
         authorize(&mut socket).await;
         let _request = text(&mut socket).await;
-        send(&mut socket, r#"a[{"e":"chart","d":{"charts":[{"id":1,"eoh":true}]}},{"e":"chart","d":{"charts":[{"id":2,"eoh":true}]}},{"e":"chart","d":{"charts":[{"id":3,"eoh":true}]}},{"i":2,"s":200}]"#).await;
+        // The malformed record fences data publication: the co-batched record
+        // behind it cannot cross the gap, and later frames resume after the
+        // caller acknowledges the exact marker.
+        send(&mut socket, r#"a[{"e":"chart","d":{"charts":[{"id":1,"eoh":true}]}},{"e":"md","d":null},{"e":"chart","d":{"charts":[{"id":3,"eoh":true}]}},{"i":2,"s":200}]"#).await;
         let _second = text(&mut socket).await;
         send(
             &mut socket,
@@ -173,7 +293,7 @@ async fn overflow_delivers_prefix_gap_and_recovered_data_on_the_same_socket() {
         .await;
         closed(&mut socket).await;
     });
-    let mut connection = connect(&client, RealtimeConfig::default().event_capacity(2)).await;
+    let mut connection = connect(&client, RealtimeConfig::default()).await;
     let generation = connection.connection_id();
     let id = contract(42);
     assert!(
@@ -182,19 +302,17 @@ async fn overflow_delivers_prefix_gap_and_recovered_data_on_the_same_socket() {
             .await
             .is_ok()
     );
-    for _ in 0..2 {
-        assert!(matches!(
-            event(&mut connection).await.payload(),
-            RealtimeEventPayload::Chart(_)
-        ));
-    }
+    assert!(matches!(
+        event(&mut connection).await.payload(),
+        RealtimeEventPayload::Chart(_)
+    ));
     let RealtimeEventPayload::ContinuityGap(gap) = event(&mut connection).await.into_payload()
     else {
         panic!("missing ordered gap");
     };
     assert_eq!(
         gap.reason(),
-        tradovate_client::realtime::ResyncReason::EventBufferOverflow
+        tradovate_client::realtime::ResyncReason::MalformedRecord
     );
     assert!(matches!(
         connection.state(),
@@ -216,6 +334,63 @@ async fn overflow_delivers_prefix_gap_and_recovered_data_on_the_same_socket() {
     assert!(
         matches!(&chart.packets()[0], tradovate_client::realtime::ChartPacket::EndOfHistory(id) if id.get() == 99)
     );
+    assert!(connection.shutdown().await.is_ok());
+    assert!(server.await.is_ok());
+}
+
+/// A frame with more records than the configured per-frame decode limit is a
+/// genuine record-safety loss: the accepted prefix is retained, the excess
+/// records install an explicit continuity failure, and the socket stays usable.
+#[tokio::test]
+async fn records_above_the_configured_frame_limit_fail_explicitly() {
+    use tradovate_client::realtime::ResyncReason;
+    let (client, listener) = fixture().await;
+    let server = tokio::spawn(async move {
+        let mut socket = accept(&listener).await;
+        authorize(&mut socket).await;
+        let _request = text(&mut socket).await;
+        // The completion rides inside the configured two-record budget; the
+        // third chart record exceeds the limit and fails explicitly.
+        send(&mut socket, r#"a[{"i":2,"s":200},{"e":"chart","d":{"charts":[{"id":1,"eoh":true}]}},{"e":"chart","d":{"charts":[{"id":2,"eoh":true}]}}]"#).await;
+        let _second = text(&mut socket).await;
+        send(
+            &mut socket,
+            r#"a[{"e":"chart","d":{"charts":[{"id":9,"eoh":true}]}},{"i":3,"s":200}]"#,
+        )
+        .await;
+        closed(&mut socket).await;
+    });
+    let mut connection =
+        connect(&client, RealtimeConfig::default().max_messages_per_frame(2)).await;
+    let id = contract(42);
+    assert!(
+        connection
+            .subscribe_market_data(MarketDataChannel::Quotes, &id)
+            .await
+            .is_ok()
+    );
+    assert!(matches!(
+        event(&mut connection).await.payload(),
+        RealtimeEventPayload::Chart(_)
+    ));
+    let RealtimeEventPayload::ContinuityGap(gap) = event(&mut connection).await.into_payload()
+    else {
+        panic!("missing explicit frame-limit failure");
+    };
+    assert_eq!(gap.reason(), ResyncReason::MalformedRecord);
+    assert!(connection.acknowledge_continuity_gap(gap));
+    assert!(
+        connection
+            .subscribe_market_data(MarketDataChannel::DepthOfMarket, &id)
+            .await
+            .is_ok()
+    );
+    let recovered = event(&mut connection).await.into_payload();
+    assert!(matches!(
+        &recovered,
+        RealtimeEventPayload::Chart(chart)
+            if matches!(&chart.packets()[0], tradovate_client::realtime::ChartPacket::EndOfHistory(id) if id.get() == 9)
+    ));
     assert!(connection.shutdown().await.is_ok());
     assert!(server.await.is_ok());
 }
@@ -255,6 +430,44 @@ async fn malformed_records_keep_completions_and_refusal_errors_intact() {
             .is_ok()
     );
     assert!(connection.acknowledge_continuity_gap(gap));
+    assert!(connection.shutdown().await.is_ok());
+    assert!(server.await.is_ok());
+}
+
+/// Outbound admission stays bounded even though inbound venue events do not:
+/// a full pending-request table refuses the new subscription with a typed
+/// error before transmission, and the admitted one still completes.
+#[tokio::test]
+async fn pending_limit_refuses_new_work_with_a_typed_error() {
+    use tradovate_client::realtime::RealtimeError;
+    let (client, listener) = fixture().await;
+    let (first_seen, seen) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let mut socket = accept(&listener).await;
+        authorize(&mut socket).await;
+        let first = text(&mut socket).await;
+        assert!(first.starts_with("md/subscribeQuote\n2\n"));
+        // Never acknowledge the first subscription, so its pending slot stays
+        // occupied while the second request is refused locally.
+        assert!(first_seen.send(()).is_ok());
+        send(&mut socket, r#"a[{"i":2,"s":200}]"#).await;
+        closed(&mut socket).await;
+    });
+    let connection = connect(&client, RealtimeConfig::default().max_pending_requests(1)).await;
+    let session = connection.session();
+    let first = tokio::spawn(async move {
+        session
+            .subscribe_market_data(MarketDataChannel::Quotes, &contract(42))
+            .await
+    });
+    assert!(seen.await.is_ok());
+    assert!(matches!(
+        connection
+            .subscribe_market_data(MarketDataChannel::DepthOfMarket, &contract(43))
+            .await,
+        Err(RealtimeError::PendingLimitReached { limit: 1 })
+    ));
+    assert!(first.await.unwrap_or_else(|e| panic!("join: {e}")).is_ok());
     assert!(connection.shutdown().await.is_ok());
     assert!(server.await.is_ok());
 }
@@ -379,7 +592,7 @@ async fn remote_close_retains_prefix_gap_and_end_in_order() {
         send(&mut socket, r#"a[{"e":"chart","d":{"charts":[{"id":1,"eoh":true}]}},{"e":"md","d":null},{"e":"shutdown","d":{"reasonCode":"Maintenance"}},{"i":2,"s":200}]"#).await;
         assert!(socket.send(Message::Close(None)).await.is_ok());
     });
-    let mut connection = connect(&client, RealtimeConfig::default().event_capacity(1)).await;
+    let mut connection = connect(&client, RealtimeConfig::default()).await;
     assert!(
         connection
             .subscribe_market_data(MarketDataChannel::Quotes, &contract(42))

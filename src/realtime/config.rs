@@ -10,13 +10,17 @@ use super::RealtimeError;
 const DEFAULT_MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_MAX_MESSAGES_PER_FRAME: usize = 65_536;
 const DEFAULT_MAX_PENDING_REQUESTS: usize = 4_096;
-const DEFAULT_MAX_COLLECTION_ENTRIES: usize = 65_536;
+const DEFAULT_MAX_COLLECTION_ENTRIES: usize = super::bounded::DEFAULT_COLLECTION_LIMIT;
 const DEFAULT_COMMAND_CAPACITY: usize = 4_096;
-const DEFAULT_EVENT_CAPACITY: usize = 65_536;
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_LIVENESS_TIMEOUT: Duration = Duration::from_secs(10);
 /// Resource ceilings and timeouts for one real-time socket generation.
+///
+/// Inbound venue events are not a configured ceiling: accepted events are
+/// retained in source order without an event-count cutoff, and their lag is
+/// observable through [`super::RealtimeConnection::backlog`]. Every control
+/// here bounds outbound or decoding work instead.
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RealtimeConfig {
@@ -25,7 +29,6 @@ pub struct RealtimeConfig {
     max_pending_requests: usize,
     max_collection_entries: usize,
     command_capacity: usize,
-    event_capacity: usize,
     request_timeout: Duration,
     write_timeout: Duration,
     liveness_timeout: Duration,
@@ -87,13 +90,6 @@ impl RealtimeConfig {
         self
     }
 
-    /// Sets the event capacity. Saturation retains a continuity gap after the
-    /// accepted prefix and fences data until the consumer acknowledges recovery.
-    pub const fn event_capacity(mut self, capacity: usize) -> Self {
-        self.event_capacity = capacity;
-        self
-    }
-
     /// Sets the deadline for connection setup, authorization, and requests.
     pub const fn request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
@@ -134,12 +130,6 @@ impl RealtimeConfig {
         self.command_capacity
     }
 
-    /// Returns the event channel capacity.
-    #[must_use]
-    pub const fn event_channel_capacity(&self) -> usize {
-        self.event_capacity
-    }
-
     /// Returns the request and setup timeout.
     #[must_use]
     pub const fn request_deadline(&self) -> Duration {
@@ -164,10 +154,8 @@ impl RealtimeConfig {
         positive(self.max_collection_entries, "max_collection_entries")?;
         positive(self.max_pending_requests, "max_pending_requests")?;
         positive(self.command_capacity, "command_capacity")?;
-        positive(self.event_capacity, "event_capacity")?;
         for (value, field) in [
             (self.command_capacity, "command_capacity"),
-            (self.event_capacity, "event_capacity"),
             (self.max_pending_requests, "max_pending_requests"),
         ] {
             if value > tokio::sync::Semaphore::MAX_PERMITS {
@@ -198,7 +186,6 @@ impl Default for RealtimeConfig {
             max_pending_requests: DEFAULT_MAX_PENDING_REQUESTS,
             max_collection_entries: DEFAULT_MAX_COLLECTION_ENTRIES,
             command_capacity: DEFAULT_COMMAND_CAPACITY,
-            event_capacity: DEFAULT_EVENT_CAPACITY,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             write_timeout: DEFAULT_WRITE_TIMEOUT,
             liveness_timeout: DEFAULT_LIVENESS_TIMEOUT,
@@ -263,7 +250,6 @@ mod tests {
             RealtimeConfig::default().max_collection_entries(0),
             RealtimeConfig::default().max_pending_requests(0),
             RealtimeConfig::default().command_capacity(0),
-            RealtimeConfig::default().event_capacity(0),
         ];
         assert!(invalid.into_iter().all(|config| config.validate().is_err()));
     }
@@ -296,12 +282,6 @@ mod tests {
         assert!(
             RealtimeConfig::default()
                 .command_capacity(usize::MAX)
-                .validate()
-                .is_err()
-        );
-        assert!(
-            RealtimeConfig::default()
-                .event_capacity(usize::MAX)
                 .validate()
                 .is_err()
         );

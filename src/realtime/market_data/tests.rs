@@ -73,8 +73,8 @@ fn quote_entry_without_price_or_size_is_rejected() {
 }
 
 #[test]
-fn oversized_quote_entry_map_is_a_typed_limit_failure() {
-    let entries = (0..=super::decode::MAX_QUOTE_ENTRIES)
+fn quote_entries_above_the_former_fixed_cap_decode_fully() {
+    let entries = (0..200)
         .map(|index| format!(r#""Future{index}":{{"size":1}}"#))
         .collect::<Vec<_>>()
         .join(",");
@@ -83,8 +83,23 @@ fn oversized_quote_entry_map_is_a_typed_limit_failure() {
     );
     let raw = raw(&payload);
 
+    let decoded = decode::event(Some(&raw));
+    let Ok(event) = decoded else {
+        panic!("a 200-entry quote exceeds every former fixed cap and must decode");
+    };
+    assert_eq!(event.quotes()[0].entries().len(), 200);
+}
+
+#[test]
+fn configured_quote_entry_bound_is_a_typed_limit_failure() {
+    let raw = raw(
+        r#"{"quotes":[{"timestamp":"2026-08-21T00:00:00Z","contractId":42,
+        "entries":{"a":{"size":1},"b":{"size":1},"c":{"size":1}}}]}"#,
+    );
+
+    let decoded = crate::realtime::bounded::with_limit(2, || decode::event(Some(&raw)));
     assert!(matches!(
-        decode::event(Some(&raw)),
+        decoded,
         Err(RealtimeError::InvalidEvent {
             reason: RealtimePayloadError::LimitExceeded,
             ..

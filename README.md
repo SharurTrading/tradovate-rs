@@ -68,7 +68,7 @@ manifest.
 - Validated provider IDs, timestamps, enums, and request builders.
 - Redacted credentials and revision-fenced access-token lifecycle.
 - Caller-owned Tokio runtime with no blocking network path.
-- Bounded HTTP bodies, WebSocket frames, queues, pending requests, and timeouts.
+- Bounded HTTP bodies, WebSocket frames, outbound queues, pending requests, and timeouts; accepted realtime venue events are retained in order without an event-count cutoff.
 - Explicit query versus money-moving mutation policies.
 - No automatic retry when an order or position mutation may have reached Tradovate.
 - Generation-fenced realtime lifecycle and explicit transport-gap recovery.
@@ -252,9 +252,12 @@ The cloneable `RealtimeSession` can run while the owner drains events. It cannot
 reconnect, acknowledge recovery, or keep the connection owner alive. Chart IDs also
 carry their allocating generation; stale operations fail before enqueueing.
 
-`recv_event()` preserves accepted data, then a retained `ContinuityGap` when an
-application record is malformed, unsupported, or cannot fit the event queue. The
-socket keeps processing replies and keepalives while data delivery is fenced. Install
+Accepted venue events are retained in source order without an event-count
+cutoff: a slow receiver observes lag through `backlog()` (retained-event depth
+and oldest-event age), never a locally fabricated gap. `recv_event()` preserves
+accepted data, then a retained `ContinuityGap` when an application record is
+malformed or unsupported. The socket keeps processing replies and keepalives
+while data delivery is fenced. Install
 snapshot/reconciliation recovery, then call `acknowledge_continuity_gap(gap)` with the
 exact delivered marker. Delivery resumes on the same socket; pre-boundary buffered
 records cannot reenter it. A gap alone does not prove subscriptions ended.
@@ -313,7 +316,7 @@ is reported by the individual invocation and does not end the socket.
 | --- | --- | --- |
 | Command queue | 4,096 | Async admission waits until the request deadline; queued cancellation can prove not sent. |
 | Outstanding replies | 4,096 | New requests fail locally with `PendingLimitReached`. Completed subscriptions consume no slots. |
-| Event queue | 65,536 | Retain the accepted prefix and a nonterminal gap; keep replies and heartbeat processing available. |
+| Retained venue events | No count cutoff | Accepted events are retained in source order until delivered; `backlog()` observes depth and oldest-event age. Only genuine record loss retains a gap. |
 | Frame bytes | 8 MiB | Caller-selected transport resource bound; an exceeded WebSocket framing limit ends that transport. |
 | Records per frame | 65,536 | Caller-selected decode bound; excess records cause a gap. |
 | Entries per decoded collection | 65,536 | Caller-selected decode bound; excess application data causes a gap. |
@@ -322,10 +325,17 @@ is reported by the individual invocation and does not end the socket.
 Payload and collection defaults are client memory controls, not claimed provider
 limits. They can be raised explicitly for the workload. Queue configuration no longer
 multiplies the largest possible payload into a speculative aggregate memory charge.
-Actual memory depends on queued payload sizes and decoded collection contents; size
-queues for consumer delay and the largest expected frame. Keep finite limits for
-untrusted endpoints. There is no total active-subscription cap. The documented shared
-provider rate budgets and penalty cooldowns remain unchanged.
+Actual memory depends on queued payload sizes and decoded collection contents. Keep
+finite limits for untrusted endpoints. There is no total active-subscription cap. The
+documented shared provider rate budgets and penalty cooldowns remain unchanged.
+
+Version 0.3 removes the fixed event-queue capacity: inbound venue events are
+retained truth and are no longer dropped behind a `ContinuityGap` when a local
+count is exceeded, while outbound command admission and pending requests stay
+bounded with typed refusal. `RealtimeConfig::event_capacity` and
+`ResyncReason::EventBufferOverflow` are removed, and `RealtimeConnection::backlog`
+reports retained-event lag. Consumers decide from observed lag whether a delayed
+event may still authorize trading.
 
 See [the lifecycle audit and migration decision](docs/adr/0002-realtime-continuity.md)
 for termination sites, provider evidence, and deterministic stress coverage.

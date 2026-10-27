@@ -20,10 +20,6 @@ use crate::realtime::{
     ProviderCode, RealtimeError, RealtimeEventKind, RealtimePayloadError, Response,
 };
 
-pub(super) const MAX_BOOTSTRAP_COLLECTIONS: usize = 128;
-const MAX_ENTITIES_PER_BATCH: usize = 16_384;
-const MAX_PROPERTY_EVENTS: usize = 4_096;
-
 pub(crate) const BOOTSTRAP_COLLECTIONS: &[&str] = &[
     "users",
     "userProperties",
@@ -66,7 +62,7 @@ pub(crate) fn bootstrap(response: &Response) -> Result<UserStreamEvent, Realtime
         )
     })?;
     let collections = bounded::from_str::<
-        BoundedMap<String, Box<RawValue>, MAX_BOOTSTRAP_COLLECTIONS>,
+        BoundedMap<String, Box<RawValue>, { bounded::DEFAULT_COLLECTION_LIMIT }>,
     >(data.get())
     .map_err(|error| decode_error(RealtimeEventKind::Bootstrap, error))?;
     if !collections.as_map().contains_key("users")
@@ -100,8 +96,9 @@ pub(crate) fn properties(data: Option<&RawValue>) -> Result<UserStreamEvent, Rea
             RealtimePayloadError::MissingData,
         )
     })?;
-    let events = bounded::one_or_many::<WireProperty, MAX_PROPERTY_EVENTS>(data.get())
-        .map_err(|error| decode_error(RealtimeEventKind::Properties, error))?;
+    let events =
+        bounded::one_or_many::<WireProperty, { bounded::DEFAULT_COLLECTION_LIMIT }>(data.get())
+            .map_err(|error| decode_error(RealtimeEventKind::Properties, error))?;
     if events.is_empty() {
         return Err(invalid(
             RealtimeEventKind::Properties,
@@ -266,7 +263,7 @@ fn decode_vec<T>(raw: &RawValue) -> Result<Box<[T]>, RealtimeError>
 where
     T: DeserializeOwned,
 {
-    bounded::from_str::<BoundedVec<T, MAX_ENTITIES_PER_BATCH>>(raw.get())
+    bounded::from_str::<BoundedVec<T, { bounded::DEFAULT_COLLECTION_LIMIT }>>(raw.get())
         .map(BoundedVec::into_vec)
         .map(Vec::into_boxed_slice)
         .map_err(|error| decode_error(RealtimeEventKind::Bootstrap, error))
@@ -276,7 +273,7 @@ fn decode_one_or_many<T>(raw: &RawValue) -> Result<Box<[T]>, RealtimeError>
 where
     T: DeserializeOwned,
 {
-    bounded::one_or_many::<T, MAX_ENTITIES_PER_BATCH>(raw.get())
+    bounded::one_or_many::<T, { bounded::DEFAULT_COLLECTION_LIMIT }>(raw.get())
         .map(Vec::into_boxed_slice)
         .map_err(|error| decode_error(RealtimeEventKind::Properties, error))
 }
@@ -291,7 +288,7 @@ fn unsupported(
     } else {
         RealtimeEventKind::Properties
     };
-    let count = bounded::count_one_or_many::<MAX_ENTITIES_PER_BATCH>(raw.get())
+    let count = bounded::count_one_or_many::<{ bounded::DEFAULT_COLLECTION_LIMIT }>(raw.get())
         .map_err(|error| decode_error(kind, error))?;
     Ok(UserEntityBatch::Unsupported {
         entity_type: provider_code(name)?,

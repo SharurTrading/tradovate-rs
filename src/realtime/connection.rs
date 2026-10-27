@@ -78,14 +78,27 @@ impl RealtimeConnection {
         Ok(*self.state.borrow_and_update())
     }
 
-    /// Receives the next bounded unsolicited server item.
+    /// Receives the next unsolicited server item.
     ///
-    /// `None` means the actor has stopped. Inspect [`Self::state`] for the
+    /// Accepted venue events are retained in source order until received;
+    /// see [`Self::backlog`] for lag observation. `None` means the actor has
+    /// stopped. Inspect [`Self::state`] for the
     /// terminal category. Accepted events precede retained continuity gaps and
     /// generation-ended evidence. A gap fences data, not requests or keepalives;
     /// acknowledge it only after installing recovery. Replacements are caller-owned.
     pub async fn recv_event(&mut self) -> Option<RealtimeEvent> {
         self.events.recv().await
+    }
+
+    /// Observes retained-event lag without consuming events.
+    ///
+    /// Accepted venue events are retained in source order until delivered, so
+    /// backlog depth and oldest-event age are observational lag, never a
+    /// continuity failure. The consuming platform alone decides whether a
+    /// delayed event may still authorize trading.
+    #[must_use]
+    pub fn backlog(&self) -> super::EventBacklog {
+        self.events.backlog()
     }
 
     /// Captures this immutable generation for concurrent subscription work.
@@ -238,10 +251,7 @@ impl Client {
         )?;
         let connection_id = next_connection_id();
         let (commands, command_receiver) = mpsc::channel(config.command_channel_capacity());
-        let events = Arc::new(super::delivery::Delivery::new(
-            connection_id,
-            config.event_channel_capacity(),
-        ));
+        let events = Arc::new(super::delivery::Delivery::new(connection_id));
         let initial_state = RealtimeState::Connecting { connection_id };
         let (state_sender, state) = watch::channel(initial_state);
         let (ready_sender, ready) = oneshot::channel();
