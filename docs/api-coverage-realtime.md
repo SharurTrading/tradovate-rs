@@ -82,10 +82,11 @@ and makes teardown observable.
 Each successful attempt receives a process-local `ConnectionId`. Events carry that ID,
 and the handle never replaces its socket with a new generation. It does not retain a
 canonical desired-subscription set, account projection, order mirror, or replay
-session. After a `ContinuityGap`, install snapshot/reconciliation recovery and call
-`acknowledge_continuity_gap` with the exact received marker. The accepted event prefix
-precedes the gap, and stale markers or buffered records cannot reopen an old boundary.
-Replies and keepalives remain available throughout. `RealtimeConnection::backlog`
+session. A `ContinuityGap` reports a lost application record at its source position;
+valid suffix records, replies and keepalives continue without acknowledgement.
+The caller owns recovery. `retire(&mut self)` stops producers, finishes the
+already-received bounded batch and retains the receiver for a complete ordered
+drain before replacement. `RealtimeConnection::backlog`
 observes retained-event depth and oldest-event age as lag; lag alone never installs
 a gap. Unknown subscription outcomes remain caller-owned; timeout/cancellation does
 not prove unsubscribe/reset success.

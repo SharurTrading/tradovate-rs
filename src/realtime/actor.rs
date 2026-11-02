@@ -91,7 +91,6 @@ struct Actor {
     probe: Option<receive::ActiveProbe>,
     next_probe: u64,
     batch: Option<super::codec::RecordBatch>,
-    batch_epoch: Option<u64>,
     heartbeat: time::Interval,
     rate_limits: std::sync::Arc<RateGovernor>,
 }
@@ -155,7 +154,6 @@ pub(super) async fn run(input: ActorInput) -> Result<(), RealtimeError> {
         probe: None,
         next_probe: 0,
         batch: None,
-        batch_epoch: Some(1),
         heartbeat,
         rate_limits,
     };
@@ -172,9 +170,10 @@ pub(super) async fn run(input: ActorInput) -> Result<(), RealtimeError> {
         return Ok(());
     }
     let result = normalize_shutdown(actor.event_loop().await);
-    actor.pending.drain_uncertain();
     admission.end();
     actor.cancellation.cancel();
+    actor.finish_received_batch().await;
+    actor.pending.drain_uncertain();
     let delivery = std::sync::Arc::clone(&actor.events);
     drop(actor); // Both socket halves and every pending producer stop before this evidence.
     delivery.end(result);
@@ -183,6 +182,13 @@ pub(super) async fn run(input: ActorInput) -> Result<(), RealtimeError> {
 }
 
 impl Actor {
+    async fn finish_received_batch(&mut self) {
+        while self.batch.is_some() {
+            self.handle_next_record();
+            tokio::task::yield_now().await;
+        }
+    }
+
     fn publish_established(
         &mut self,
         bootstrap: Option<Response>,

@@ -142,8 +142,8 @@ impl UnmatchedResponse {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum RealtimeEventPayload {
-    /// Accepted events precede this retained marker. Install a recovery boundary
-    /// and acknowledge it to resume data on the same socket.
+    /// A record was lost at this source position. Valid later records continue;
+    /// the consumer owns reconciliation of incomplete projections.
     ContinuityGap(super::ContinuityGap),
     /// Both socket producers have stopped. The exact terminal error is retained.
     GenerationEnded(Result<(), super::RealtimeError>),

@@ -269,7 +269,7 @@ Split crates only when a real ownership, dependency, trust, or runtime boundary 
 | **TV-PAT-CQS-01** | Query execution and mutation execution are separate policy paths. Retry, rate admission, cancellation, and error classification must make the distinction visible. |
 | **TV-PAT-STATE-01** | Mutable session and connection truth has one writer. Readers receive owned snapshots or events; stale work is rejected by revision/generation checks. |
 | **TV-PAT-RAII-01** | Attempt, connection, subscription-invocation, and background-task guards make cleanup and cancellation explicit. Every spawned task has a cancellation mechanism and tracked teardown; dropping a `JoinHandle` is not cancellation. |
-| **TV-PAT-BOUNDS-01** | Outbound and control-path buffers have named limits with explicit typed refusal; accepted inbound venue events are retained in source order without an event-count cutoff, and genuine loss installs an explicit continuity marker. Continuing after a dropped realtime update is prohibited unless the caller performs explicit recovery. |
+| **TV-PAT-BOUNDS-01** | Outbound and control-path buffers have named limits with explicit typed refusal; accepted inbound venue events are retained in source order without an event-count cutoff, and genuine loss installs an explicit continuity marker. A loss notification never suppresses valid later records; consumers own the recovery of their projections. |
 | **TV-PAT-BUILDER-01** | Use a validated builder when optional configuration exceeds two fields or construction has cross-field invariants. Builders are `#[must_use]`; invalid intermediate values never reach transport. |
 | **TV-PAT-NEWTYPE-01** | Public provider IDs and invariant-bearing scalar values have private fields, validated constructors/parsers, and validating Serde implementations. |
 | **TV-PAT-ERROR-01** | Library failures use focused `thiserror` enums with sources and public-safe context. Expected remote or input failures return `Result`; they do not panic. |
@@ -335,13 +335,12 @@ Split crates only when a real ownership, dependency, trust, or runtime boundary 
 9. If a request may have been admitted but its completion is lost, retain an unknown
    outcome without resending or reusing its identity. Cancel only its wait; preserve
    the socket and unrelated operations.
-10. On a malformed or unrepresentable application record, fence data publication
-   and retain a nonterminal continuity gap after the accepted event prefix.
-   Accepted venue events are never dropped for local queue pressure or age.
-   Keep replies and keepalives running. Resume only after the consumer installs
-   its recovery boundary and acknowledges the exact delivered marker; stale
-   buffered records must not cross that boundary. Retain terminal evidence
-   after the ordered gap.
+10. On a malformed or unrepresentable application record, retain a nonterminal
+    continuity gap at its source position and continue valid later records,
+    replies and keepalives without acknowledgement. Accepted venue events are
+    never dropped for local queue pressure or age. Explicit retirement closes
+    admission and stops new socket reads, finishes the already-received bounded
+    batch, then retains terminal evidence after all ordered records.
 11. The library does not automatically reconnect. A caller-created replacement uses a
    fresh token snapshot, and the caller replays its canonical subscriptions; transport
    retains neither subscriptions nor a replay queue.

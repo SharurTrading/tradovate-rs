@@ -5,14 +5,14 @@ SPDX-License-Identifier: MIT-0
 
 # ADR 0002: Preserve socket lifetime during local continuity recovery
 
-Status: proposed for 0.2.0; supersedes the recovery details in ADR 0001.
+Status: implemented; amended for ordered record loss in 0.4.0 on 2026-11-02.
+Supersedes the recovery details in ADR 0001.
 Date: 2026-09-09.
 Amended 2026-10-27 (issue #24): delivery no longer bounds accepted venue events
 by count, so the retention paragraph below and the "Full queue" termination-site
 row describe the superseded 0.2 behavior. Since 0.3, accepted venue events are
 retained in source order without an event-count cutoff, `RealtimeConnection::backlog`
-exposes depth and oldest-event age as observable lag, gap fencing and terminal
-evidence ordering are unchanged, and genuine record loss remains the only local
+exposes depth and oldest-event age as observable lag, terminal evidence ordering is unchanged, and genuine record loss remains the only local
 gap trigger; outbound command/pending admission stays bounded with typed refusal.
 
 ## Provider evidence and scope
@@ -53,7 +53,7 @@ owner drop never create another connection.
 | `connection` request wait guard | Abandonment cancelled the generation | Atomically prevent queued transmission or retain an unknown admitted outcome; wake pending cleanup only. |
 | `actor/pending` | Completion deadline ended the generation | Expire only the wait with `RequestOutcomeUncertain`; do not resend or reuse its ID. |
 | Active record decoding | One malformed envelope/payload propagated a terminal error | Retain a continuity gap and continue independently framed records, replies, and keepalives. |
-| Event publication | Full queue/unsupported event ended the generation | Preserve accepted prefix; retain one gap independently of data capacity; fence subsequent data. |
+| Event publication | Full queue/unsupported event ended the generation | Retain accepted prefix, ordered loss marker and valid suffix without a delivery fence. |
 | Active response controls | HTTP-200 business refusal or penalty terminated the socket | Preserve the original typed request error and provider cooldown; keep the socket. |
 | Inactivity watchdog | Ordinary inbound silence caused teardown | Transmit an active ping after idle time; fail only an unanswered matching-pong deadline. |
 | Active writer | The next heartbeat or caller deadline cancelled a write | Separate socket-write deadline; expired caller wait does not interrupt an admitted transmission. |
@@ -100,14 +100,22 @@ Teardown during queue admission returns `StaleGeneration`, proving no enqueue;
 it does not invent a termination category from an earlier `Ready` state. The exact
 terminal result remains in the retained generation-ended event and shutdown result.
 
-The delivery owner retains bounded accepted events and independent fixed-size gap
-and terminal slots. The first provider shutdown notice is separately retained at its
-ordered position, even during a gap; additional queued notices explicitly signal loss. Consumers drain the prefix before receiving the gap. Only the
-exact delivered marker can acknowledge recovery. A delivery epoch captured before
-batch decoding prevents previously buffered records from publishing or installing a
-new gap after recovery; requests still complete while application data is fenced.
-A transport end is retained behind the prefix and gap even if no recovery is possible.
-The latest-state watch is not an ordered log; ordered consumers use `recv_event`.
+The delivery owner retains accepted events and loss markers in one FIFO sequence.
+Malformed and unsupported records report loss without suppressing valid suffix
+records. Repeated losses retain their own source positions. The first pending
+provider shutdown notice remains separately budgeted; refusing another notice
+places a loss marker at that refusal's position. Data retention has no count
+cutoff; frame bytes, records and decoded collections retain their explicit bounds.
+
+`retire(&mut self)` closes admission and cancels producers while preserving the
+receiver. Before draining pending requests as uncertain, the actor finishes only
+its already-received bounded batch, yielding between records. Known co-batched
+responses therefore settle before unknown outcomes. No new socket read is started.
+After both socket halves stop, ordered `GenerationEnded` follows the retained
+suffix. Consumers can drain to `None`, then establish authoritative replacement
+state without replaying old deltas over the new snapshot. `shutdown(self)` uses the
+same producer retirement and consumes the owner. The latest-state watch is not an
+ordered log; ordered consumers use `recv_event`.
 
 ## Resource controls and throughput
 

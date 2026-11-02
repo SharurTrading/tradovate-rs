@@ -67,10 +67,8 @@ async fn first_close_notice_is_retained_and_saturation_installs_explicit_loss() 
     // Data accepted after a notice stays behind it in source order.
     delivery.publish(accepted_fixture());
     // The retained-notice point holds one notice; the first additional one
-    // installs explicit loss and the rest stay covered by that same marker.
-    for _ in 0..4 {
-        delivery.publish(shutdown_fixture());
-    }
+    // installs explicit loss at its source position.
+    delivery.publish(shutdown_fixture());
     // Saturation preserves the retained venue events untouched.
     assert_eq!(delivery.backlog().depth(), 2);
     for expected in [
@@ -93,7 +91,6 @@ async fn first_close_notice_is_retained_and_saturation_installs_explicit_loss() 
         panic!("saturation did not install explicit loss");
     };
     assert_eq!(marker.reason(), ResyncReason::EventBufferOverflow);
-    assert!(delivery.acknowledge(marker), "delivered marker");
     delivery.end(Err(RealtimeError::ServerClosed));
     assert!(matches!(
         delivery.recv().await.map(RealtimeEvent::into_payload),
@@ -105,7 +102,7 @@ async fn first_close_notice_is_retained_and_saturation_installs_explicit_loss() 
 }
 
 #[tokio::test]
-async fn data_published_after_saturation_never_crosses_the_marker() {
+async fn data_published_after_notice_loss_follows_the_marker() {
     let delivery = Delivery::new(ConnectionId::new(1));
     delivery.publish(accepted_fixture());
     delivery.publish(shutdown_fixture());
@@ -113,8 +110,7 @@ async fn data_published_after_saturation_never_crosses_the_marker() {
     // The second notice saturates the retained-notice point and installs
     // explicit loss instead of unbounded queue growth.
     delivery.publish(shutdown_fixture());
-    // Publication offered once the marker is pending is dropped: stale
-    // buffered records must not cross the recovery boundary.
+    // The valid suffix remains deliverable after the notice-loss marker.
     delivery.publish(accepted_fixture());
     delivery.end(Ok(()));
     assert!(matches!(
@@ -136,6 +132,10 @@ async fn data_published_after_saturation_never_crosses_the_marker() {
         panic!("expected the saturation marker");
     };
     assert_eq!(marker.reason(), ResyncReason::EventBufferOverflow);
+    assert!(matches!(
+        delivery.recv().await.map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::UnmatchedResponse(_))
+    ));
     assert!(matches!(
         delivery.recv().await.map(RealtimeEvent::into_payload),
         Some(RealtimeEventPayload::GenerationEnded(Ok(())))
@@ -196,49 +196,32 @@ async fn notice_published_during_pending_gap_follows_the_marker() {
 }
 
 #[tokio::test]
-async fn acknowledgement_rejects_stale_producers_and_markers() {
+async fn separated_losses_preserve_each_valid_suffix_in_source_order() {
     let delivery = Delivery::new(ConnectionId::new(1));
-    let before_gap = delivery.epoch();
+    delivery.publish(accepted_fixture());
     delivery.gap(ResyncReason::MalformedRecord);
-    let Some(event) = delivery.recv().await else {
-        panic!("missing gap");
-    };
-    let RealtimeEventPayload::ContinuityGap(first) = event.into_payload() else {
-        panic!("wrong event");
-    };
-    assert!(delivery.acknowledge(first));
-    // Work captured before recovery cannot reenter or reset the new boundary.
-    delivery.gap_at(before_gap, ResyncReason::MalformedRecord);
-    assert!(delivery.epoch().is_some());
-    delivery.publish_at(
-        before_gap,
-        RealtimeEventPayload::UnmatchedResponse(super::super::event::UnmatchedResponse::new(
-            super::super::RequestId::new(3),
-            200,
-        )),
-    );
-    assert!(delivery.queue.lock().events.is_empty());
-    delivery.gap(ResyncReason::ConnectionLost);
-    assert!(!delivery.acknowledge(first));
-    let second = delivery.queue.lock().gap.map(|(gap, _)| gap);
-    assert!(
-        !delivery.acknowledge(second.unwrap_or(first)),
-        "undelivered marker"
-    );
-    let Some(event) = delivery.recv().await else {
-        panic!("missing second marker");
-    };
-    let RealtimeEventPayload::ContinuityGap(second_delivered) = event.into_payload() else {
-        panic!("stale work crossed the recovery boundary");
-    };
-    assert_eq!(second_delivered.reason(), ResyncReason::ConnectionLost);
-    assert!(
-        !delivery.acknowledge(first),
-        "delayed first acknowledgement"
-    );
-    // The stale-published event and the refused stale marker request stay
-    // fenced: draining the ended generation yields only the terminal evidence.
+    delivery.publish(accepted_fixture());
+    delivery.gap(ResyncReason::UnsupportedEvent);
+    delivery.publish(accepted_fixture());
     delivery.end(Ok(()));
+    for expected in [
+        None,
+        Some(ResyncReason::MalformedRecord),
+        None,
+        Some(ResyncReason::UnsupportedEvent),
+        None,
+    ] {
+        let payload = delivery.recv().await.map(RealtimeEvent::into_payload);
+        match expected {
+            Some(reason) => assert!(
+                matches!(payload, Some(RealtimeEventPayload::ContinuityGap(gap)) if gap.reason() == reason)
+            ),
+            None => assert!(matches!(
+                payload,
+                Some(RealtimeEventPayload::UnmatchedResponse(_))
+            )),
+        }
+    }
     assert!(matches!(
         delivery.recv().await.map(RealtimeEvent::into_payload),
         Some(RealtimeEventPayload::GenerationEnded(Ok(())))

@@ -53,7 +53,6 @@ impl Actor {
             Message::Text(text) if text.starts_with('a') => {
                 match RecordBatch::new(text, self.config.messages_per_frame_limit()) {
                     Ok(batch) => {
-                        self.batch_epoch = self.events.epoch();
                         self.batch = Some(batch);
                     }
                     Err(_) => self.events.gap(ResyncReason::MalformedRecord),
@@ -98,8 +97,7 @@ impl Actor {
         match self.batch.as_mut().and_then(RecordBatch::next) {
             Some(Ok(message)) => self.handle_server_message(message),
             Some(Err(_)) => {
-                self.events
-                    .gap_at(self.batch_epoch, ResyncReason::MalformedRecord);
+                self.events.gap(ResyncReason::MalformedRecord);
             }
             None => {
                 self.batch = None;
@@ -128,8 +126,7 @@ impl Actor {
                         let result =
                             response::classify(response, request_id, endpoint, &self.rate_limits);
                         if matches!(result, Err(RealtimeError::Protocol)) {
-                            self.events
-                                .gap_at(self.batch_epoch, ResyncReason::MalformedRecord);
+                            self.events.gap(ResyncReason::MalformedRecord);
                         }
                         drop(reply.send(result));
                         return;
@@ -148,10 +145,8 @@ impl Actor {
         match crate::realtime::bounded::with_limit(self.config.collection_entries_limit(), || {
             decode::message(message)
         }) {
-            Ok(payload) => self.events.publish_at(self.batch_epoch, payload),
-            Err(_) => self
-                .events
-                .gap_at(self.batch_epoch, ResyncReason::MalformedRecord),
+            Ok(payload) => self.events.publish(payload),
+            Err(_) => self.events.gap(ResyncReason::MalformedRecord),
         }
     }
 }
