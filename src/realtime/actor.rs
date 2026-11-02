@@ -91,7 +91,6 @@ struct Actor {
     probe: Option<receive::ActiveProbe>,
     next_probe: u64,
     batch: Option<super::codec::RecordBatch>,
-    batch_epoch: Option<u64>,
     heartbeat: time::Interval,
     rate_limits: std::sync::Arc<RateGovernor>,
 }
@@ -155,7 +154,6 @@ pub(super) async fn run(input: ActorInput) -> Result<(), RealtimeError> {
         probe: None,
         next_probe: 0,
         batch: None,
-        batch_epoch: Some(1),
         heartbeat,
         rate_limits,
     };
@@ -172,17 +170,29 @@ pub(super) async fn run(input: ActorInput) -> Result<(), RealtimeError> {
         return Ok(());
     }
     let result = normalize_shutdown(actor.event_loop().await);
-    actor.pending.drain_uncertain();
     admission.end();
     actor.cancellation.cancel();
-    let delivery = std::sync::Arc::clone(&actor.events);
-    drop(actor); // Both socket halves and every pending producer stop before this evidence.
-    delivery.end(result);
+    actor.finish_generation(result).await;
     publish_active_terminal(&state, connection_id, result);
     result
 }
 
 impl Actor {
+    async fn finish_generation(mut self, result: Result<(), RealtimeError>) {
+        self.settle_received_batch().await;
+        let delivery = std::sync::Arc::clone(&self.events);
+        drop(self);
+        delivery.end(result);
+    }
+
+    async fn settle_received_batch(&mut self) {
+        while self.batch.is_some() {
+            self.handle_next_record();
+            tokio::task::yield_now().await;
+        }
+        self.pending.drain_uncertain();
+    }
+
     fn publish_established(
         &mut self,
         bootstrap: Option<Response>,
@@ -231,6 +241,7 @@ impl Actor {
             };
             match wake {
                 Wake::Shutdown => {
+                    self.settle_received_batch().await;
                     self.close().await;
                     return Ok(());
                 }

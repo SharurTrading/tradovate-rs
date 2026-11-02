@@ -1,16 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Kevin Monaghan
 // SPDX-License-Identifier: MIT-0
 
-//! One generation's accepted venue-event retention and lifecycle evidence.
+//! One generation's ordered venue events, loss notifications and terminal evidence.
 //!
-//! Accepted venue events are retained in source order without an event-count
-//! cutoff: a slow consumer observes lag, never a locally fabricated gap. Only
-//! genuine loss fences publication with a continuity marker after the accepted
-//! prefix: malformed or unrepresentable records, and close notices beyond the
-//! retained first, whose lifecycle-evidence point stays bounded instead of
-//! growing without a named limit. Retained-event memory is bounded by the
-//! provider's own sending rate while the consumer stays parked; the notice
-//! point and outbound work remain separately bounded (`TV-PAT-BOUNDS-01`).
+//! Valid records remain deliverable after a loss. The first pending shutdown
+//! notice has its own budget; refusing another notice retains an ordered gap.
 
 use std::collections::VecDeque;
 
@@ -19,14 +13,10 @@ use tokio::sync::Notify;
 
 use super::{ConnectionId, RealtimeError, RealtimeEvent, RealtimeEventPayload, ResyncReason};
 
-/// An opaque recovery marker for exactly one discontinuity on one socket.
-///
-/// If this generation exhausts its marker sequence, acknowledgement permanently
-/// fails closed. The caller then needs a replacement connection for recovery.
+/// A source-ordered notification of lost continuity on one socket.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ContinuityGap {
     connection_id: ConnectionId,
-    sequence: u64,
     reason: ResyncReason,
 }
 
@@ -37,7 +27,7 @@ impl ContinuityGap {
         self.connection_id
     }
 
-    /// Returns the first cause since the last acknowledged recovery boundary.
+    /// Returns the cause of this loss notification.
     #[must_use]
     pub const fn reason(self) -> ResyncReason {
         self.reason
@@ -45,22 +35,13 @@ impl ContinuityGap {
 }
 
 struct Retained {
-    accepted_at: std::time::Instant,
-    event: RealtimeEvent,
-}
-
-/// A graceful-shutdown notice retained at its ordered position.
-struct Notice {
-    before: usize,
-    clean: bool,
+    accepted_at: Option<std::time::Instant>,
     event: RealtimeEvent,
 }
 
 struct Queue {
     events: VecDeque<Retained>,
-    notices: VecDeque<Notice>,
-    gap: Option<(ContinuityGap, bool)>,
-    next_gap: u64,
+    shutdown_pending: bool,
     ended: Option<Result<(), RealtimeError>>,
     end_delivered: bool,
 }
@@ -77,9 +58,7 @@ impl Delivery {
             connection_id,
             queue: Mutex::new(Queue {
                 events: VecDeque::new(),
-                notices: VecDeque::new(),
-                gap: None,
-                next_gap: 1,
+                shutdown_pending: false,
                 ended: None,
                 end_delivered: false,
             }),
@@ -87,92 +66,47 @@ impl Delivery {
         }
     }
 
-    pub(super) fn epoch(&self) -> Option<u64> {
-        let queue = self.queue.lock();
-        (queue.gap.is_none() && queue.ended.is_none()).then_some(queue.next_gap)
-    }
-
     pub(super) fn publish(&self, payload: RealtimeEventPayload) {
-        self.publish_at(self.epoch(), payload);
-    }
-
-    pub(super) fn publish_at(&self, epoch: Option<u64>, payload: RealtimeEventPayload) {
         let mut queue = self.queue.lock();
         if queue.ended.is_some() {
             return;
         }
-        if matches!(payload, RealtimeEventPayload::Shutdown(_)) {
-            if queue.notices.is_empty() {
-                // The first close notice is accepted provider evidence,
-                // retained once at its ordered position; it never displaces
-                // retained venue data.
-                let notice = Notice {
-                    before: queue.events.len(),
-                    clean: queue.gap.is_none(),
-                    event: RealtimeEvent::new(self.connection_id, payload),
-                };
-                queue.notices.push_back(notice);
-            } else {
-                // Retain the first close notice. The lifecycle-notice point is
-                // bounded, so additional notices cannot grow an unbounded
-                // evidence queue: their loss installs an explicit marker
-                // (issue #50) instead of a silent drop. A marker already
-                // pending covers notice loss until it is acknowledged.
-                self.install_gap(&mut queue, ResyncReason::EventBufferOverflow);
+        let shutdown = matches!(payload, RealtimeEventPayload::Shutdown(_));
+        if shutdown && queue.shutdown_pending {
+            self.install_gap(&mut queue, ResyncReason::EventBufferOverflow);
+        } else {
+            let unsupported = payload.requires_resync();
+            queue.events.push_back(Retained {
+                accepted_at: (!shutdown).then(std::time::Instant::now),
+                event: RealtimeEvent::new(self.connection_id, payload),
+            });
+            queue.shutdown_pending |= shutdown;
+            if unsupported {
+                self.install_gap(&mut queue, ResyncReason::UnsupportedEvent);
             }
-            self.changed.notify_one();
-            return;
-        }
-        if epoch != Some(queue.next_gap) || queue.gap.is_some() || queue.ended.is_some() {
-            return;
-        }
-        let unsupported = payload.requires_resync();
-        queue.events.push_back(Retained {
-            accepted_at: std::time::Instant::now(),
-            event: RealtimeEvent::new(self.connection_id, payload),
-        });
-        if unsupported {
-            self.install_gap(&mut queue, ResyncReason::UnsupportedEvent);
         }
         self.changed.notify_one();
     }
 
     pub(super) fn gap(&self, reason: ResyncReason) {
-        self.gap_at(self.epoch(), reason);
-    }
-
-    pub(super) fn gap_at(&self, epoch: Option<u64>, reason: ResyncReason) {
         let mut queue = self.queue.lock();
-        if epoch != Some(queue.next_gap) {
-            return;
+        if queue.ended.is_none() {
+            self.install_gap(&mut queue, reason);
+            self.changed.notify_one();
         }
-        self.install_gap(&mut queue, reason);
-        self.changed.notify_one();
     }
 
     fn install_gap(&self, queue: &mut Queue, reason: ResyncReason) {
-        if queue.gap.is_none() && queue.ended.is_none() {
-            queue.gap = Some((
-                ContinuityGap {
+        queue.events.push_back(Retained {
+            accepted_at: None,
+            event: RealtimeEvent::new(
+                self.connection_id,
+                RealtimeEventPayload::ContinuityGap(ContinuityGap {
                     connection_id: self.connection_id,
-                    sequence: queue.next_gap,
                     reason,
-                },
-                false,
-            ));
-            // Exhaustion leaves the final marker unacknowledgeable, never reuses it.
-            queue.next_gap = queue.next_gap.saturating_add(1);
-        }
-    }
-
-    pub(super) fn acknowledge(&self, marker: ContinuityGap) -> bool {
-        let mut queue = self.queue.lock();
-        if queue.ended.is_none() && queue.next_gap != u64::MAX && queue.gap == Some((marker, true))
-        {
-            queue.gap = None;
-            return true;
-        }
-        false
+                }),
+            ),
+        });
     }
 
     /// Observes retained venue-event lag without consuming events. Lifecycle
@@ -181,9 +115,16 @@ impl Delivery {
     /// long the oldest such event has waited.
     pub(super) fn backlog(&self) -> super::EventBacklog {
         let queue = self.queue.lock();
-        let oldest = queue.events.front().map(|retained| retained.accepted_at);
+        let oldest = queue
+            .events
+            .iter()
+            .find_map(|retained| retained.accepted_at);
         super::EventBacklog::new(
-            queue.events.len(),
+            queue
+                .events
+                .iter()
+                .filter(|event| event.accepted_at.is_some())
+                .count(),
             oldest.map(|accepted_at| accepted_at.elapsed()),
         )
     }
@@ -215,41 +156,11 @@ impl Delivery {
             let changed = self.changed.notified();
             {
                 let mut queue = self.queue.lock();
-                if queue
-                    .notices
-                    .front()
-                    .is_some_and(|notice| notice.before == 0 && notice.clean)
-                {
-                    return queue.notices.pop_front().map(|notice| notice.event);
-                }
                 if let Some(retained) = queue.events.pop_front() {
-                    // Every pending notice counts this event ahead of it, not
-                    // only the front one; a front-only decrement leaves deeper
-                    // notices with stale counts and lets later events overtake
-                    // them.
-                    for notice in &mut queue.notices {
-                        notice.before = notice.before.saturating_sub(1);
+                    if matches!(retained.event.payload(), RealtimeEventPayload::Shutdown(_)) {
+                        queue.shutdown_pending = false;
                     }
                     return Some(retained.event);
-                }
-                if let Some((gap, delivered)) = &mut queue.gap
-                    && !*delivered
-                {
-                    *delivered = true;
-                    let gap = *gap;
-                    // Notices published while this gap was pending were held
-                    // behind the marker; with the marker delivered their
-                    // hold is resolved, so they resume ordered delivery.
-                    for notice in &mut queue.notices {
-                        notice.clean = true;
-                    }
-                    return Some(RealtimeEvent::new(
-                        self.connection_id,
-                        RealtimeEventPayload::ContinuityGap(gap),
-                    ));
-                }
-                if let Some(notice) = queue.notices.pop_front() {
-                    return Some(notice.event);
                 }
                 if let Some(result) = queue.ended {
                     if queue.end_delivered {

@@ -275,15 +275,13 @@ async fn three_thousand_concurrent_subscriptions_and_events() {
 }
 
 #[tokio::test]
-async fn continuity_gap_delivers_prefix_exactly_one_ack_and_recovered_data() {
+async fn continuity_gap_delivers_prefix_suffix_and_later_frames_without_acknowledgement() {
     let (client, listener) = fixture().await;
     let server = tokio::spawn(async move {
         let mut socket = accept(&listener).await;
         authorize(&mut socket).await;
         let _request = text(&mut socket).await;
-        // The malformed record fences data publication: the co-batched record
-        // behind it cannot cross the gap, and later frames resume after the
-        // caller acknowledges the exact marker.
+        // The malformed record reports loss between the two valid charts.
         send(&mut socket, r#"a[{"e":"chart","d":{"charts":[{"id":1,"eoh":true}]}},{"e":"md","d":null},{"e":"chart","d":{"charts":[{"id":3,"eoh":true}]}},{"i":2,"s":200}]"#).await;
         let _second = text(&mut socket).await;
         send(
@@ -318,8 +316,9 @@ async fn continuity_gap_delivers_prefix_exactly_one_ack_and_recovered_data() {
         connection.state(),
         tradovate_client::realtime::RealtimeState::Ready { .. }
     ));
-    assert!(connection.acknowledge_continuity_gap(gap));
-    assert!(!connection.acknowledge_continuity_gap(gap));
+    let suffix = event(&mut connection).await.into_payload();
+    assert!(matches!(suffix, RealtimeEventPayload::Chart(chart)
+        if matches!(&chart.packets()[0], tradovate_client::realtime::ChartPacket::EndOfHistory(id) if id.get() == 3)));
     assert!(
         connection
             .subscribe_market_data(MarketDataChannel::DepthOfMarket, &id)
@@ -378,7 +377,6 @@ async fn records_above_the_configured_frame_limit_fail_explicitly() {
         panic!("missing explicit frame-limit failure");
     };
     assert_eq!(gap.reason(), ResyncReason::MalformedRecord);
-    assert!(connection.acknowledge_continuity_gap(gap));
     assert!(
         connection
             .subscribe_market_data(MarketDataChannel::DepthOfMarket, &id)
@@ -422,14 +420,13 @@ async fn malformed_records_keep_completions_and_refusal_errors_intact() {
         panic!("missing gap");
     };
     assert_eq!(gap.reason(), ResyncReason::MalformedRecord);
-    // Requests remain available even before data recovery is acknowledged.
+    // Requests remain available while consumer truth requires recovery.
     assert!(
         connection
             .subscribe_market_data(MarketDataChannel::DepthOfMarket, &id)
             .await
             .is_ok()
     );
-    assert!(connection.acknowledge_continuity_gap(gap));
     assert!(connection.shutdown().await.is_ok());
     assert!(server.await.is_ok());
 }
@@ -607,6 +604,10 @@ async fn remote_close_retains_prefix_gap_and_end_in_order() {
     else {
         panic!("missing gap");
     };
+    assert_eq!(
+        gap.reason(),
+        tradovate_client::realtime::ResyncReason::MalformedRecord
+    );
     assert!(matches!(
         event(&mut connection).await.payload(),
         RealtimeEventPayload::Shutdown(_)
@@ -615,7 +616,6 @@ async fn remote_close_retains_prefix_gap_and_end_in_order() {
         event(&mut connection).await.payload(),
         RealtimeEventPayload::GenerationEnded(Err(RealtimeError::ServerClosed))
     ));
-    assert!(!connection.acknowledge_continuity_gap(gap));
     assert!(connection.recv_event().await.is_none());
     assert_eq!(
         connection.shutdown().await,

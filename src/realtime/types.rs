@@ -63,7 +63,7 @@ pub enum DisconnectReason {
     ActorStopped,
 }
 
-/// Why consumers must discard local projections and obtain a fresh snapshot.
+/// Why consumer projections require authoritative continuity recovery.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ResyncReason {

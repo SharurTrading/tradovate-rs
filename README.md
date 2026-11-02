@@ -249,18 +249,20 @@ outlive an explicit shutdown or cancelled connection attempt.
 
 Capture `connection.session()` **before dispatching concurrent subscription work**.
 The cloneable `RealtimeSession` can run while the owner drains events. It cannot
-reconnect, acknowledge recovery, or keep the connection owner alive. Chart IDs also
+reconnect or keep the connection owner alive. Chart IDs also
 carry their allocating generation; stale operations fail before enqueueing.
 
 Accepted venue events are retained in source order without an event-count
 cutoff: a slow receiver observes lag through `backlog()` (retained-event depth
 and oldest-event age), never a locally fabricated gap. `recv_event()` preserves
-accepted data, then a retained `ContinuityGap` when an application record is
-malformed or unsupported. The socket keeps processing replies and keepalives
-while data delivery is fenced. Install
-snapshot/reconciliation recovery, then call `acknowledge_continuity_gap(gap)` with the
-exact delivered marker. Delivery resumes on the same socket; pre-boundary buffered
-records cannot reenter it. A gap alone does not prove subscriptions ended.
+accepted data and an ordered `ContinuityGap` at each malformed or unsupported
+application record, followed by every independently decoded valid suffix record.
+Replies and keepalives continue. A gap reports incomplete consumer truth; it does
+not pause delivery or prove subscriptions ended. Consumers own reconciliation.
+`retire()` stops socket producers after finishing the already-received bounded
+batch and leaves the receiver available to drain through `GenerationEnded` and
+`None`. A caller can then establish a replacement and its fresh user bootstrap;
+old deltas must not be replayed over the replacement snapshot.
 
 Cancellation atomically prevents queued work from starting when possible. Once a
 request starts, timeout returns `RequestOutcomeUncertain`; cancellation has the same
@@ -329,16 +331,20 @@ Actual memory depends on queued payload sizes and decoded collection contents. K
 finite limits for untrusted endpoints. There is no total active-subscription cap. The
 documented shared provider rate budgets and penalty cooldowns remain unchanged.
 
-Version 0.3 removes the fixed event-queue capacity: inbound venue events are
+Version 0.3 removed the fixed event-queue capacity: inbound venue events are
 retained truth and are no longer dropped behind a `ContinuityGap` when a local
 count is exceeded, while outbound command admission and pending requests stay
-bounded with typed refusal. `RealtimeConfig::event_capacity` and
-`ResyncReason::EventBufferOverflow` are removed, and `RealtimeConnection::backlog`
+bounded with typed refusal. `RealtimeConfig::event_capacity` was removed, and `RealtimeConnection::backlog`
 reports retained-event lag. Consumers decide from observed lag whether a delayed
 event may still authorize trading.
 
 See [the lifecycle audit and migration decision](docs/adr/0002-realtime-continuity.md)
 for termination sites, provider evidence, and deterministic stress coverage.
+
+Version 0.4 removes `acknowledge_continuity_gap` and publication epochs. Loss
+markers now retain their source positions without suppressing later data.
+`retire(&mut self)` stops producers while keeping accepted evidence drainable;
+`shutdown(self)` retains its consuming convenience API.
 
 ## Official protocol references
 

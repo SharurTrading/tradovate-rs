@@ -83,9 +83,9 @@ impl RealtimeConnection {
     /// Accepted venue events are retained in source order until received;
     /// see [`Self::backlog`] for lag observation. `None` means the actor has
     /// stopped. Inspect [`Self::state`] for the
-    /// terminal category. Accepted events precede retained continuity gaps and
-    /// generation-ended evidence. A gap fences data, not requests or keepalives;
-    /// acknowledge it only after installing recovery. Replacements are caller-owned.
+    /// terminal category. Loss markers retain their source positions between valid
+    /// records; they never fence later data, requests or keepalives. Terminal
+    /// evidence follows all retained records. Replacements are caller-owned.
     pub async fn recv_event(&mut self) -> Option<RealtimeEvent> {
         self.events.recv().await
     }
@@ -122,15 +122,6 @@ impl RealtimeConnection {
         }
     }
 
-    /// Acknowledges a delivered gap after the caller installs snapshot/reconciliation
-    /// recovery. Stale, undelivered and ended-generation markers return `false`.
-    /// Exhausting the generation's marker sequence permanently returns `false`;
-    /// recovery then requires a caller-owned replacement connection.
-    #[must_use]
-    pub fn acknowledge_continuity_gap(&mut self, gap: super::ContinuityGap) -> bool {
-        self.events.acknowledge(gap)
-    }
-
     #[cfg(test)]
     pub(super) async fn request_non_mutating(
         &self,
@@ -143,6 +134,23 @@ impl RealtimeConnection {
             .await
     }
 
+    /// Stops socket producers while keeping received evidence drainable.
+    ///
+    /// Closes admission and finishes only the already-received bounded batch,
+    /// including correlated replies, before publishing generation-ended evidence.
+    /// No new socket read starts. The receiver remains usable through `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the actor's terminal typed error or
+    /// [`RealtimeError::ActorTaskFailed`] if its task failed.
+    pub async fn retire(&mut self) -> Result<(), RealtimeError> {
+        self.admission.end();
+        self.cancellation.cancel();
+        self.tasks.wait().await;
+        self.events.result()
+    }
+
     /// Cancels the connection and joins its actor task.
     ///
     /// # Errors
@@ -150,11 +158,8 @@ impl RealtimeConnection {
     /// Returns the actor's terminal typed error, or
     /// [`RealtimeError::ActorTaskFailed`] if the spawned task panicked or was
     /// externally aborted.
-    pub async fn shutdown(self) -> Result<(), RealtimeError> {
-        self.admission.end();
-        self.cancellation.cancel();
-        self.tasks.wait().await;
-        self.events.result()
+    pub async fn shutdown(mut self) -> Result<(), RealtimeError> {
+        self.retire().await
     }
 }
 
