@@ -264,6 +264,13 @@ batch and leaves the receiver available to drain through `GenerationEnded` and
 `None`. A caller can then establish a replacement and its fresh user bootstrap;
 old deltas must not be replayed over the replacement snapshot.
 
+`queued_event_count()` snapshots the local FIFO prefix already retained by the
+same connection. Unlike `backlog()`, it includes shutdown notices, continuity
+gaps and pending `GenerationEnded` evidence. The sole consumer can receive that
+many events without draining later arrivals; it must retain the same connection
+generation while doing so. This observation is not a venue, time or transport
+boundary, and it does not stop producers or acknowledge recovery.
+
 Cancellation atomically prevents queued work from starting when possible. Once a
 request starts, timeout returns `RequestOutcomeUncertain`; cancellation has the same
 unknown outcome. Neither closes the socket or retries the operation. Keep uncertain

@@ -9,6 +9,9 @@ This project is pre-release. No release entries have been published.
 
 ## 0.4.0 (unreleased)
 
+- Add `RealtimeConnection::queued_event_count()` for an exact local retained FIFO
+  prefix, including control and pending terminal events; keep `backlog()` as the
+  separate venue-event lag observation.
 - Continuity loss is reported at its FIFO source position without discarding valid
   suffix records. Remove recovery acknowledgement and batch publication epochs.
 - Add `RealtimeConnection::retire(&mut self)` to stop producers while preserving

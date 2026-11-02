@@ -101,6 +101,19 @@ impl RealtimeConnection {
         self.events.backlog()
     }
 
+    /// Counts the already-retained prefix of this generation's event receiver.
+    ///
+    /// Includes venue events, shutdown notices, continuity gaps and pending
+    /// generation-ended evidence. The sole consumer can receive exactly this
+    /// many items to consume that prefix; later arrivals remain behind it.
+    /// Keep the same connection owner while consuming the count. This is a local
+    /// delivery observation, not a venue, timestamp or transport boundary.
+    /// [`Self::backlog`] remains the separate venue-event lag observation.
+    #[must_use]
+    pub fn queued_event_count(&self) -> usize {
+        self.events.queued_event_count()
+    }
+
     /// Captures this immutable generation for concurrent subscription work.
     ///
     /// Capture before dispatching a task. The handle has no lifecycle or recovery
