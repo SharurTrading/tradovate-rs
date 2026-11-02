@@ -228,3 +228,94 @@ async fn separated_losses_preserve_each_valid_suffix_in_source_order() {
     ));
     assert!(delivery.recv().await.is_none());
 }
+
+#[tokio::test]
+async fn queued_event_count_includes_loss_and_shutdown_without_venue_backlog() {
+    let delivery = Delivery::new(ConnectionId::new(1));
+    assert_eq!(delivery.queued_event_count(), 0);
+    delivery.gap(ResyncReason::MalformedRecord);
+    assert_eq!(delivery.backlog().depth(), 0);
+    assert_eq!(delivery.queued_event_count(), 1);
+    assert!(matches!(
+        delivery.recv().await.map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::ContinuityGap(_))
+    ));
+    assert_eq!(delivery.queued_event_count(), 0);
+    delivery.publish(shutdown_fixture());
+    assert_eq!(delivery.backlog().depth(), 0);
+    assert_eq!(delivery.queued_event_count(), 1);
+    assert!(matches!(
+        delivery.recv().await.map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::Shutdown(_))
+    ));
+    assert_eq!(delivery.queued_event_count(), 0);
+}
+
+#[tokio::test]
+async fn queued_event_count_captures_the_prefix_before_later_arrivals() {
+    let delivery = Delivery::new(ConnectionId::new(1));
+    delivery.publish(accepted_fixture());
+    delivery.gap(ResyncReason::MalformedRecord);
+    delivery.publish(accepted_fixture());
+    let prefix = delivery.queued_event_count();
+    assert_eq!(prefix, 3);
+    delivery.publish(shutdown_fixture());
+    assert_eq!(delivery.queued_event_count(), 4);
+    let mut received = Vec::new();
+    for _ in 0..prefix {
+        received.push(delivery.recv().await.map(RealtimeEvent::into_payload));
+    }
+    assert!(matches!(
+        received.as_slice(),
+        [
+            Some(RealtimeEventPayload::UnmatchedResponse(_)),
+            Some(RealtimeEventPayload::ContinuityGap(_)),
+            Some(RealtimeEventPayload::UnmatchedResponse(_))
+        ]
+    ));
+    assert_eq!(delivery.queued_event_count(), 1);
+    assert!(matches!(
+        delivery.recv().await.map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::Shutdown(_))
+    ));
+    assert_eq!(delivery.queued_event_count(), 0);
+}
+
+#[tokio::test]
+async fn queued_event_count_includes_terminal_once_and_rejects_post_end_publication() {
+    let delivery = Delivery::new(ConnectionId::new(1));
+    delivery.publish(accepted_fixture());
+    delivery.gap(ResyncReason::MalformedRecord);
+    delivery.publish(shutdown_fixture());
+    delivery.end(Err(RealtimeError::ServerClosed));
+    let prefix = delivery.queued_event_count();
+    assert_eq!(prefix, 4);
+    delivery.publish(accepted_fixture());
+    delivery.gap(ResyncReason::UnsupportedEvent);
+    delivery.publish(shutdown_fixture());
+    delivery.end(Ok(()));
+    assert_eq!(delivery.queued_event_count(), prefix);
+    assert!(matches!(
+        delivery.recv().await.map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::UnmatchedResponse(_))
+    ));
+    assert!(matches!(
+        delivery.recv().await.map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::ContinuityGap(gap))
+            if gap.reason() == ResyncReason::MalformedRecord
+    ));
+    assert!(matches!(
+        delivery.recv().await.map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::Shutdown(_))
+    ));
+    assert_eq!(delivery.queued_event_count(), 1);
+    assert!(matches!(
+        delivery.recv().await.map(RealtimeEvent::into_payload),
+        Some(RealtimeEventPayload::GenerationEnded(Err(
+            RealtimeError::ServerClosed
+        )))
+    ));
+    assert_eq!(delivery.queued_event_count(), 0);
+    assert!(delivery.recv().await.is_none());
+    assert_eq!(delivery.queued_event_count(), 0);
+}

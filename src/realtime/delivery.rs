@@ -129,6 +129,11 @@ impl Delivery {
         )
     }
 
+    pub(super) fn queued_event_count(&self) -> usize {
+        let queue = self.queue.lock();
+        queue.events.len() + usize::from(queue.ended.is_some() && !queue.end_delivered)
+    }
+
     /// Called only after both socket halves and their pending producers are dropped.
     pub(super) fn end(&self, result: Result<(), RealtimeError>) {
         self.end_if_absent(result);

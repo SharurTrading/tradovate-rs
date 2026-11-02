@@ -107,6 +107,15 @@ provider shutdown notice remains separately budgeted; refusing another notice
 places a loss marker at that refusal's position. Data retention has no count
 cutoff; frame bytes, records and decoded collections retain their explicit bounds.
 
+`queued_event_count()` observes the already-retained FIFO prefix under the same
+queue lock used for publication and receipt. It includes shutdown notices,
+continuity markers and one pending generation-ended event. Once generation end
+is installed, publication cannot append another event ahead of that terminal
+evidence. A sole consumer can receive the captured number on the same immutable
+generation while leaving later arrivals for subsequent processing. The count
+does not stop producers, fence venue state or acknowledge consumer recovery;
+`backlog()` remains the separate accepted-venue-event lag observation.
+
 `retire(&mut self)` closes admission and cancels producers while preserving the
 receiver. Before draining pending requests as uncertain, the actor finishes only
 its already-received bounded batch, yielding between records. Known co-batched
