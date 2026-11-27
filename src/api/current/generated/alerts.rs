@@ -18,6 +18,7 @@ pub struct AdminAlertSignal {
     #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
     id: Option<super::ids::AdminAlertSignalId>,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "adminAlertId")]
     admin_alert_id: super::ids::AdminAlertId,
@@ -40,6 +41,7 @@ pub struct AdminAlertSignal {
     )]
     owned_by_admin_id: Option<super::ids::OwnedByAdminId>,
     #[serde(rename = "completed", default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     completed: Option<jiff::Timestamp>,
     #[serde(rename = "text")]
     text: String,
@@ -48,6 +50,7 @@ pub struct AdminAlertSignal {
     #[serde(rename = "subjectId")]
     subject_id: super::ids::SubjectId,
     #[serde(rename = "claimedAt", default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     claimed_at: Option<jiff::Timestamp>,
 }
 
@@ -319,6 +322,7 @@ pub struct Alert {
     #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
     id: Option<super::ids::AlertId>,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "userId")]
     user_id: crate::UserId,
@@ -331,6 +335,7 @@ pub struct Alert {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     valid_until: Option<jiff::Timestamp>,
     #[serde(
         rename = "triggerLimits",
@@ -597,6 +602,7 @@ pub struct AlertSignal {
     #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
     id: Option<super::ids::AlertSignalId>,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "alertId")]
     alert_id: super::ids::AlertId,
@@ -849,6 +855,7 @@ pub struct CreateAlert {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     valid_until: Option<jiff::Timestamp>,
     #[serde(
         rename = "triggerLimits",
@@ -1158,6 +1165,7 @@ pub struct ModifyAlert {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     valid_until: Option<jiff::Timestamp>,
     #[serde(
         rename = "triggerLimits",

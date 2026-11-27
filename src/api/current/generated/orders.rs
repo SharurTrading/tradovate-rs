@@ -24,6 +24,7 @@ pub struct CancelOrder {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     activation_time: Option<jiff::Timestamp>,
     #[serde(
         rename = "customTag50",
@@ -1966,6 +1967,7 @@ pub struct ModifyOrder {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     expire_time: Option<jiff::Timestamp>,
     #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
     text: Option<String>,
@@ -1974,6 +1976,7 @@ pub struct ModifyOrder {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     activation_time: Option<jiff::Timestamp>,
     #[serde(
         rename = "customTag50",
@@ -2813,6 +2816,7 @@ pub struct PlaceOCO {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     expire_time: Option<jiff::Timestamp>,
     #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
     text: Option<String>,
@@ -2821,6 +2825,7 @@ pub struct PlaceOCO {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     activation_time: Option<jiff::Timestamp>,
     #[serde(
         rename = "customTag50",
@@ -3205,6 +3210,7 @@ pub struct PlaceOSO {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     expire_time: Option<jiff::Timestamp>,
     #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
     text: Option<String>,
@@ -3213,6 +3219,7 @@ pub struct PlaceOSO {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     activation_time: Option<jiff::Timestamp>,
     #[serde(
         rename = "customTag50",
@@ -4096,6 +4103,7 @@ pub struct PlaceOrder {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     expire_time: Option<jiff::Timestamp>,
     #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
     text: Option<String>,
@@ -4104,6 +4112,7 @@ pub struct PlaceOrder {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     activation_time: Option<jiff::Timestamp>,
     #[serde(
         rename = "customTag50",
@@ -5423,6 +5432,7 @@ pub struct RestrainedOrderVersion {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     expire_time: Option<jiff::Timestamp>,
     #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
     text: Option<String>,

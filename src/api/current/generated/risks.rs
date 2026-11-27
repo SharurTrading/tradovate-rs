@@ -91,6 +91,7 @@ pub struct ContractMargin {
     #[serde(with = "crate::decimal")]
     maintenance_margin: crate::Decimal,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
 }
 
@@ -703,6 +704,7 @@ pub struct ProductMargin {
     #[serde(with = "crate::decimal")]
     maintenance_margin: crate::Decimal,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
 }
 
@@ -1463,6 +1465,7 @@ pub struct UpdateUserAutoLiq {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     flatten_timestamp: Option<jiff::Timestamp>,
     #[serde(
         rename = "trailingMaxDrawdown",
@@ -1912,6 +1915,7 @@ pub struct UpdateUserAutoLiqItem {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     flatten_timestamp: Option<jiff::Timestamp>,
     #[serde(
         rename = "trailingMaxDrawdown",

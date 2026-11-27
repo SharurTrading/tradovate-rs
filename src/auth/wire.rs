@@ -65,6 +65,7 @@ pub(crate) struct AccessTokenResponse {
     pub(crate) access_token: String,
     #[serde(default)]
     pub(crate) md_access_token: Option<String>,
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     pub(crate) expiration_time: Timestamp,
     pub(crate) user_id: UserId,
 }

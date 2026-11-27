@@ -20,6 +20,7 @@ pub struct CashBalanceLog {
     #[serde(rename = "accountId")]
     account_id: crate::AccountId,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "tradeDate")]
     trade_date: super::users::TradeDate,

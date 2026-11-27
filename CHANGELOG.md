@@ -13,6 +13,7 @@ This project is pre-release. No release entries have been published.
   use Jiff 1.x. Request and response timestamp encodings stay the same.
 - Add `ClientBuilder::wall_clock` to supply the UTC source for authentication
   expiry checks and OAuth expiry calculation. Realtime timers remain monotonic.
+- Reject leap-second timestamps to preserve distinct provider event instants.
 
 - Add `RealtimeConnection::queued_event_count()` for an exact local retained FIFO
   prefix, including control and pending terminal events; keep `backlog()` as the

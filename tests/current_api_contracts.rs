@@ -12,7 +12,7 @@ use tradovate_client::{
     api::current::{
         SecretValue,
         authentication::OAuthToken,
-        users::{Account, AccountAccountType, ModifyPassword},
+        users::{Account, AccountAccountType, Fill, ModifyPassword},
     },
 };
 
@@ -207,6 +207,33 @@ fn generated_financial_values_preserve_decimal_lexemes() {
     let expected = Decimal::from_str("12345678901234567890.12345678")
         .unwrap_or_else(|error| panic!("fixture decimal must parse: {error}"));
     assert_eq!(account.evaluation_size().copied(), Some(expected));
+}
+
+#[test]
+fn generated_fills_preserve_nanosecond_timestamps_and_reject_leap_seconds() {
+    let wire = |timestamp| {
+        json!({
+            "id": 1,
+            "orderId": 2,
+            "contractId": 3,
+            "timestamp": timestamp,
+            "tradeDate": {"year": 2016, "month": 12, "day": 31},
+            "action": "Buy",
+            "qty": 1,
+            "price": 100,
+            "active": true,
+            "finallyPaired": 1
+        })
+    };
+    let valid = "2016-12-31T23:59:59.123456789Z";
+    let fill: Fill = serde_json::from_value(wire(valid))
+        .unwrap_or_else(|error| panic!("ordinary fill must decode: {error}"));
+    assert_eq!(fill.timestamp().to_string(), valid);
+    let serialized =
+        serde_json::to_value(&fill).unwrap_or_else(|error| panic!("fill must serialize: {error}"));
+    assert_eq!(serialized["timestamp"], valid);
+
+    assert!(serde_json::from_value::<Fill>(wire("2016-12-31T23:59:60.123456789Z")).is_err());
 }
 
 #[test]
