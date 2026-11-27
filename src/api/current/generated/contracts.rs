@@ -18,6 +18,7 @@ pub struct CurrencyRate {
     #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
     id: Option<super::ids::CurrencyRateId>,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "rate")]
     #[serde(with = "crate::decimal")]

@@ -20,6 +20,7 @@ pub struct AdminAlert {
     #[serde(rename = "name")]
     name: String,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
 }
 

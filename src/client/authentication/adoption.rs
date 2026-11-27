@@ -75,7 +75,7 @@ impl Client {
             self.execute_public_without_penalty_retry(request, RENEW_TOKEN_ENDPOINT)
                 .await,
         )?;
-        let session = into_session(response)?;
+        let session = into_session(response, self.tokens.now())?;
         attempt.commit(session)
     }
 }

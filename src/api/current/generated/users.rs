@@ -88,12 +88,14 @@ pub struct AccessTokenResponse {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     expiration_time: Option<jiff::Timestamp>,
     #[serde(
         rename = "passwordExpirationTime",
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     password_expiration_time: Option<jiff::Timestamp>,
     #[serde(
         rename = "userStatus",
@@ -342,6 +344,7 @@ pub struct Account {
     #[serde(rename = "legalStatus")]
     legal_status: AccountLegalStatus,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(
         rename = "evaluationSize",
@@ -371,6 +374,7 @@ pub struct Account {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     ssf_risk_disclosure_acknowledgment: Option<jiff::Timestamp>,
     #[serde(
         rename = "spotMarginEnabled",
@@ -930,12 +934,14 @@ pub struct AccountRiskStatus {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     admin_timestamp: Option<jiff::Timestamp>,
     #[serde(
         rename = "liquidateOnly",
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     liquidate_only: Option<jiff::Timestamp>,
     #[serde(
         rename = "userTriggeredLiqOnly",
@@ -1592,20 +1598,24 @@ pub struct AnnualReview {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     first_email_sent: Option<jiff::Timestamp>,
     #[serde(
         rename = "secondEmailSent",
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     second_email_sent: Option<jiff::Timestamp>,
     #[serde(rename = "finished", default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     finished: Option<jiff::Timestamp>,
     #[serde(
         rename = "jointFinished",
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     joint_finished: Option<jiff::Timestamp>,
     #[serde(rename = "riskDisclosureNeeded")]
     risk_disclosure_needed: bool,
@@ -2446,6 +2456,7 @@ pub struct CashBalance {
     #[serde(rename = "accountId")]
     account_id: crate::AccountId,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "tradeDate")]
     trade_date: TradeDate,
@@ -2884,6 +2895,7 @@ pub struct Command {
     #[serde(rename = "orderId")]
     order_id: crate::OrderId,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "clOrdId", default, skip_serializing_if = "Option::is_none")]
     cl_ord_id: Option<crate::ClientOrderId>,
@@ -2904,6 +2916,7 @@ pub struct Command {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     activation_time: Option<jiff::Timestamp>,
     #[serde(
         rename = "customTag50",
@@ -3265,6 +3278,7 @@ pub struct CommandReport {
     #[serde(rename = "commandId")]
     command_id: crate::CommandId,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "commandStatus")]
     command_status: CommandReportCommandStatus,
@@ -4228,6 +4242,7 @@ pub struct Contract {
     #[serde(rename = "contractMaturityId")]
     contract_maturity_id: crate::ContractMaturityId,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
 }
 
@@ -4397,12 +4412,14 @@ pub struct ContractMaturity {
     #[serde(rename = "expirationMonth")]
     expiration_month: i64,
     #[serde(rename = "expirationDate")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     expiration_date: jiff::Timestamp,
     #[serde(
         rename = "firstIntentDate",
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     first_intent_date: Option<jiff::Timestamp>,
     #[serde(
         rename = "underlyingId",
@@ -6542,6 +6559,7 @@ pub struct ExecutionReport {
     #[serde(rename = "contractId")]
     contract_id: crate::ContractId,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "tradeDate", default, skip_serializing_if = "Option::is_none")]
     trade_date: Option<TradeDate>,
@@ -7411,6 +7429,7 @@ pub struct Fill {
     #[serde(rename = "contractId")]
     contract_id: crate::ContractId,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "tradeDate")]
     trade_date: TradeDate,
@@ -8303,6 +8322,7 @@ pub struct MarginSnapshot {
     #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
     id: Option<super::ids::MarginSnapshotId>,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "riskTimePeriodId")]
     risk_time_period_id: super::ids::RiskTimePeriodId,
@@ -8579,6 +8599,7 @@ pub struct MarketDataSubscription {
     #[serde(rename = "userId")]
     user_id: crate::UserId,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "planPrice")]
     #[serde(with = "crate::decimal")]
@@ -9513,6 +9534,7 @@ pub struct Order {
     )]
     spread_definition_id: Option<super::ids::SpreadDefinitionId>,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "action")]
     action: OrderAction,
@@ -9897,6 +9919,7 @@ pub struct OrderStrategy {
     #[serde(rename = "accountId")]
     account_id: crate::AccountId,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "contractId")]
     contract_id: crate::ContractId,
@@ -10543,6 +10566,7 @@ pub struct OrderVersion {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     expire_time: Option<jiff::Timestamp>,
     #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
     text: Option<String>,
@@ -11037,6 +11061,7 @@ pub struct POAContact {
     #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
     id: Option<super::ids::PoaContactId>,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "userId")]
     user_id: crate::UserId,
@@ -11701,6 +11726,7 @@ pub struct Position {
     #[serde(rename = "contractId")]
     contract_id: crate::ContractId,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "tradeDate")]
     trade_date: TradeDate,
@@ -12042,6 +12068,7 @@ pub struct PostTradeRisk {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     flatten_timestamp: Option<jiff::Timestamp>,
     #[serde(
         rename = "trailingMaxDrawdown",
@@ -14504,6 +14531,7 @@ pub struct SecondMarketDataSubscription {
     #[serde(rename = "userId")]
     user_id: crate::UserId,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "year")]
     year: i64,
@@ -14520,6 +14548,7 @@ pub struct SecondMarketDataSubscription {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     cancellation_timestamp: Option<jiff::Timestamp>,
 }
 
@@ -15252,6 +15281,7 @@ pub struct SpreadDefinition {
     #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
     id: Option<super::ids::SpreadDefinitionId>,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "spreadType")]
     spread_type: SpreadDefinitionSpreadType,
@@ -17511,6 +17541,7 @@ pub struct SyncRequest {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     cutoff_timestamp: Option<jiff::Timestamp>,
     #[serde(
         rename = "entityTypes",
@@ -17766,6 +17797,7 @@ pub struct TradingPermission {
     #[serde(rename = "status")]
     status: TradingPermissionStatus,
     #[serde(rename = "updated", default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     updated: Option<jiff::Timestamp>,
     #[serde(
         rename = "approvedById",
@@ -18160,6 +18192,7 @@ pub struct TradovateSubscription {
     #[serde(rename = "userId")]
     user_id: crate::UserId,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "planPrice")]
     #[serde(with = "crate::decimal")]
@@ -19391,6 +19424,7 @@ pub struct User {
     #[serde(rename = "name")]
     name: String,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "email")]
     email: String,
@@ -19651,6 +19685,7 @@ pub struct UserAccountAutoLiq {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     flatten_timestamp: Option<jiff::Timestamp>,
     #[serde(
         rename = "trailingMaxDrawdown",
@@ -20058,6 +20093,7 @@ pub struct UserPlugin {
     #[serde(rename = "userId")]
     user_id: crate::UserId,
     #[serde(rename = "timestamp")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: jiff::Timestamp,
     #[serde(rename = "planPrice")]
     #[serde(with = "crate::decimal")]
@@ -20754,8 +20790,10 @@ pub struct UserSession {
     #[serde(rename = "userId")]
     user_id: crate::UserId,
     #[serde(rename = "startTime")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     start_time: jiff::Timestamp,
     #[serde(rename = "endTime", default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize_optional")]
     end_time: Option<jiff::Timestamp>,
     #[serde(rename = "ipAddress", default, skip_serializing_if = "Option::is_none")]
     ip_address: Option<String>,
@@ -20924,6 +20962,7 @@ pub struct UserSessionStats {
     #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
     id: Option<super::ids::UserSessionStatsId>,
     #[serde(rename = "lastSessionTime")]
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     last_session_time: jiff::Timestamp,
     #[serde(rename = "failedPasswords")]
     failed_passwords: i64,

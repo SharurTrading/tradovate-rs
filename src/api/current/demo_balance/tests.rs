@@ -142,6 +142,7 @@ fn authenticated_client(server: &MockServer) -> Client {
         "synthetic-access-token".to_owned(),
         None,
         SessionInfo::new(user_id, expires_at, false),
+        client.tokens.now(),
     )
     .unwrap_or_else(|error| panic!("fixture session: {error}"));
     assert!(client.tokens.begin_authentication().commit(session).is_ok());

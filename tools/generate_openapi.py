@@ -588,7 +588,7 @@ class Generator:
         if kind == "boolean":
             return "bool", "copy"
         if kind == "string" and schema.get("format") == "date-time":
-            return "jiff::Timestamp", "plain"
+            return "jiff::Timestamp", "timestamp"
         if kind == "string" and field in SECRET_FIELDS:
             return "crate::api::current::SecretValue", "secret"
         if kind == "string" and field in STRING_NEWTYPE_FIELDS:
@@ -1045,6 +1045,9 @@ class Generator:
         if field["kind"] == "decimal":
             adapter = "crate::decimal" if field["required"] else "crate::decimal::option"
             lines.append(f"    #[serde(with = \"{adapter}\")]\n")
+        if field["kind"] == "timestamp":
+            reader = "deserialize" if field["required"] else "deserialize_optional"
+            lines.append(f"    #[serde(deserialize_with = \"crate::timestamp::{reader}\")]\n")
         return lines
 
     @staticmethod

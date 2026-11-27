@@ -65,7 +65,9 @@ manifest.
 
 - Standalone provider client with no dependency on SHARUR or another consumer.
 - Exact `rust_decimal::Decimal` values for financial data.
-- Validated provider IDs, timestamps, enums, and request builders.
+- Validated provider IDs, timestamps, enums, and request builders. Native timestamps use Jiff 1.x.
+  Incoming leap-second timestamps are rejected to preserve distinct event instants.
+  Applications can supply the UTC source for session expiry via `ClientBuilder::wall_clock`.
 - Redacted credentials and revision-fenced access-token lifecycle.
 - Caller-owned Tokio runtime with no blocking network path.
 - Bounded HTTP bodies, WebSocket frames, outbound queues, pending requests, and timeouts; accepted realtime venue events are retained in order without an event-count cutoff.

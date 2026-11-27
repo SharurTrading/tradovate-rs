@@ -116,13 +116,14 @@ impl Client {
             .ok_or(Error::InvalidAuthenticationResponse {
                 reason: "OAuth identity response omitted userId",
             })?;
-        let expires_at = jiff::Timestamp::now()
+        let now = self.tokens.now();
+        let expires_at = now
             .checked_add(std::time::Duration::from_secs(expires_in))
             .map_err(|_| Error::InvalidAuthenticationResponse {
                 reason: "OAuth expiration exceeds the supported timestamp range",
             })?;
         let info = SessionInfo::new(user_id, expires_at, false);
-        let session = InstalledSession::try_new(token.expose().to_owned(), None, info)?;
+        let session = InstalledSession::try_new(token.expose().to_owned(), None, info, now)?;
         attempt.commit(session)
     }
 
@@ -216,7 +217,7 @@ impl Client {
                 }
                 Err(error) => return Err(error),
             };
-        let session = into_session(response)?;
+        let session = into_session(response, self.tokens.now())?;
         admission.succeed();
         attempt.commit(session)
     }
@@ -272,7 +273,7 @@ impl Client {
             }
             Err(error) => return Err(error),
         };
-        let session = into_session(response)?;
+        let session = into_session(response, self.tokens.now())?;
         if session.info().user_id() != attempt.user_id()? {
             return Err(Error::InvalidAuthenticationResponse {
                 reason: "renewal response userId does not match the installed session",

@@ -46,6 +46,7 @@ struct WireBarPacket {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WireBar {
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: Timestamp,
     #[serde(with = "crate::decimal")]
     open: Decimal,

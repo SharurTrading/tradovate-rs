@@ -4,6 +4,10 @@
 //! Fail-closed current authentication and credential-rotation contracts.
 
 use std::str::FromStr;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 use std::time::Duration;
 
 use httpmock::prelude::*;
@@ -11,11 +15,11 @@ use jiff::Timestamp;
 use serde_json::json;
 use tokio::time::timeout;
 use tradovate_client::{
-    Client, EndpointSet, Error, UserId,
+    Client, ClientBuilder, EndpointSet, Error, UserId,
     api::current::{SecretValue, authentication::OAuthToken, users::ModifyPassword},
 };
 
-fn fixture_client(server: &MockServer) -> Client {
+fn fixture_builder(server: &MockServer) -> ClientBuilder {
     let base = server.base_url();
     let websocket = base.replacen("http://", "ws://", 1);
     let endpoints = EndpointSet::custom(
@@ -26,6 +30,10 @@ fn fixture_client(server: &MockServer) -> Client {
     )
     .unwrap_or_else(|error| panic!("fixture endpoints must be valid: {error}"));
     Client::builder_with_endpoints(endpoints)
+}
+
+fn fixture_client(server: &MockServer) -> Client {
+    fixture_builder(server)
         .build()
         .unwrap_or_else(|error| panic!("fixture client must build: {error}"))
 }
@@ -89,6 +97,60 @@ async fn authenticated_client(server: &MockServer) -> Client {
     exchange.assert_async().await;
     identity.assert_async().await;
     client
+}
+
+#[tokio::test]
+async fn oauth_expiry_uses_one_clock_read_after_the_identity_response() {
+    let server = MockServer::start_async().await;
+    let exchange = server
+        .mock_async(|when, then| {
+            when.method(POST).path("/v1/auth/oauthtoken");
+            then.status(200).json_body(json!({
+                "access_token": "synthetic-oauth-access",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            }));
+        })
+        .await;
+    let identity_seen = Arc::new(AtomicBool::new(false));
+    let observed_by_server = Arc::clone(&identity_seen);
+    let identity = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/v1/auth/me")
+                .header("authorization", "Bearer synthetic-oauth-access")
+                .is_true(move |_| {
+                    observed_by_server.store(true, Ordering::Release);
+                    true
+                });
+            then.status(200).json_body(json!({ "userId": 7 }));
+        })
+        .await;
+    let reads = Arc::new(AtomicUsize::new(0));
+    let clock_reads = Arc::clone(&reads);
+    let client = fixture_builder(&server)
+        .wall_clock(move || {
+            clock_reads.fetch_add(1, Ordering::Relaxed);
+            if identity_seen.load(Ordering::Acquire) {
+                Timestamp::constant(1_700_000_030, 123_456_789)
+            } else {
+                Timestamp::constant(1_700_000_000, 0)
+            }
+        })
+        .build()
+        .unwrap_or_else(|error| panic!("fixture client must build: {error}"));
+
+    let session = client
+        .authenticate_oauth(&oauth_grant())
+        .await
+        .unwrap_or_else(|error| panic!("fixture OAuth must succeed: {error}"));
+    assert_eq!(
+        session.expires_at(),
+        Timestamp::constant(1_700_003_630, 123_456_789)
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+    exchange.assert_async().await;
+    identity.assert_async().await;
 }
 
 #[tokio::test]

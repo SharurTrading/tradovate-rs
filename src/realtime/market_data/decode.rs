@@ -35,6 +35,7 @@ struct WireEvent {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WireQuote {
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: Timestamp,
     contract_id: ContractId,
     entries: BoundedMap<String, WireQuoteEntry, LIMIT>,
@@ -52,6 +53,7 @@ struct WireQuoteEntry {
 #[serde(rename_all = "camelCase")]
 struct WireDepth {
     contract_id: ContractId,
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: Timestamp,
     bids: BoundedVec<WireDepthLevel, LIMIT>,
     offers: BoundedVec<WireDepthLevel, LIMIT>,
@@ -69,6 +71,7 @@ struct WireDepthLevel {
 #[serde(rename_all = "camelCase")]
 struct WireHistogram {
     contract_id: ContractId,
+    #[serde(deserialize_with = "crate::timestamp::deserialize")]
     timestamp: Timestamp,
     trade_date: WireTradeDate,
     #[serde(with = "crate::decimal")]

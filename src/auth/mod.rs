@@ -5,6 +5,7 @@
 
 mod credentials;
 mod token;
+mod wall_clock;
 
 pub(crate) mod wire;
 
@@ -15,3 +16,4 @@ pub(crate) use credentials::ApiClientId;
 pub(crate) use token::{
     InstalledSession, RenewalAttempt, TokenKind, TokenSnapshot, TokenStore, is_valid_bearer_token,
 };
+pub(crate) use wall_clock::WallClock;

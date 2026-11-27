@@ -75,12 +75,15 @@ pub(super) fn authenticated_client(url: &str, access: &str, market_data: Option<
     let Ok(user_id) = UserId::new(1) else {
         panic!("fixture user ID must validate");
     };
-    let store = Arc::new(TokenStore::default());
+    let store = Arc::new(TokenStore::new(crate::auth::WallClock::supplied(|| {
+        Timestamp::UNIX_EPOCH
+    })));
     let attempt = store.begin_authentication();
     let session = InstalledSession::try_new(
         access.to_owned(),
         market_data.map(str::to_owned),
         SessionInfo::new(user_id, expires_at, market_data.is_some()),
+        store.now(),
     );
     let Ok(session) = session else {
         panic!("fixture session must validate");
