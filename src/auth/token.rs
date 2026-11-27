@@ -17,7 +17,7 @@ use jiff::Timestamp;
 use parking_lot::Mutex;
 use secrecy::{ExposeSecret, SecretString};
 
-use crate::{Error, UserId};
+use crate::{Error, UserId, auth::WallClock};
 pub(crate) use validation::is_valid_bearer_token;
 
 /// Non-secret metadata for the installed Tradovate session.
@@ -71,6 +71,7 @@ impl InstalledSession {
         access_token: String,
         market_data_token: Option<String>,
         info: SessionInfo,
+        now: Timestamp,
     ) -> Result<Self, Error> {
         if !is_valid_bearer_token(&access_token) {
             return Err(Error::InvalidAuthenticationResponse {
@@ -85,7 +86,7 @@ impl InstalledSession {
                 reason: "market-data token is empty or has invalid bearer-token syntax",
             });
         }
-        if info.expires_at <= Timestamp::now() {
+        if info.expires_at <= now {
             return Err(Error::InvalidAuthenticationResponse {
                 reason: "token expiration is not in the future",
             });
@@ -99,10 +100,6 @@ impl InstalledSession {
 
     pub(crate) const fn info(&self) -> &SessionInfo {
         &self.info
-    }
-
-    fn is_expired(&self) -> bool {
-        self.info.expires_at <= Timestamp::now()
     }
 
     fn has_valid_tokens(&self) -> bool {
@@ -175,9 +172,21 @@ struct State {
 pub(crate) struct TokenStore {
     state: Mutex<State>,
     renewal_in_flight: AtomicBool,
+    wall_clock: WallClock,
 }
 
 impl TokenStore {
+    pub(crate) fn new(wall_clock: WallClock) -> Self {
+        Self {
+            wall_clock,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn now(&self) -> Timestamp {
+        self.wall_clock.now()
+    }
+
     pub(crate) fn begin_authentication(self: &Arc<Self>) -> AuthAttempt {
         let revision = {
             let mut state = self.state.lock();
@@ -192,8 +201,9 @@ impl TokenStore {
     }
 
     pub(crate) fn snapshot(&self, kind: TokenKind) -> Result<TokenSnapshot, Error> {
+        let now = self.now();
         let mut state = self.state.lock();
-        if invalidate_expired(&mut state) {
+        if invalidate_expired(&mut state, now) {
             return Err(Error::Unauthenticated);
         }
         if state
@@ -239,14 +249,16 @@ impl TokenStore {
     }
 
     pub(crate) fn session_info(&self) -> Option<SessionInfo> {
+        let now = self.now();
         let mut state = self.state.lock();
-        invalidate_expired(&mut state);
+        invalidate_expired(&mut state, now);
         state.session.as_ref().map(|session| session.info.clone())
     }
 
     pub(crate) fn is_current(&self, snapshot: &TokenSnapshot) -> bool {
+        let now = self.now();
         let mut state = self.state.lock();
-        if invalidate_expired(&mut state) {
+        if invalidate_expired(&mut state, now) {
             return false;
         }
         if state
@@ -278,11 +290,11 @@ impl TokenStore {
     }
 }
 
-fn invalidate_expired(state: &mut State) -> bool {
+fn invalidate_expired(state: &mut State, now: Timestamp) -> bool {
     if state
         .session
         .as_ref()
-        .is_some_and(InstalledSession::is_expired)
+        .is_some_and(|session| session.info.expires_at <= now)
     {
         invalidate(state);
         true

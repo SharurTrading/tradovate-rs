@@ -5,10 +5,15 @@
 
 use std::{sync::Arc, time::Duration};
 
+use jiff::Timestamp;
 use reqwest::redirect::Policy;
 
 use super::{Client, allocate_client_instance_id, mutation::MutationGate};
-use crate::{ConfigError, EndpointSet, Error, auth::TokenStore, rate_limit::RateGovernor};
+use crate::{
+    ConfigError, EndpointSet, Error,
+    auth::{TokenStore, WallClock},
+    rate_limit::RateGovernor,
+};
 
 const DEFAULT_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 // The current customer-document contract permits an 8 MiB data field; the
@@ -30,6 +35,7 @@ pub struct ClientBuilder {
     max_response_bytes: usize,
     request_timeout: Duration,
     connect_timeout: Duration,
+    wall_clock: WallClock,
 }
 
 impl ClientBuilder {
@@ -40,6 +46,7 @@ impl ClientBuilder {
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            wall_clock: WallClock::SYSTEM,
         }
     }
 
@@ -64,6 +71,15 @@ impl ClientBuilder {
     /// Sets the TCP/TLS connection timeout.
     pub const fn connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = timeout;
+        self
+    }
+
+    /// Supplies the UTC clock used to determine token expiry.
+    ///
+    /// The source should return promptly. Without a source the SDK uses the system clock.
+    /// Realtime and rate-limit deadlines continue to use monotonic timers.
+    pub fn wall_clock(mut self, clock: impl Fn() -> Timestamp + Send + Sync + 'static) -> Self {
+        self.wall_clock = WallClock::supplied(clock);
         self
     }
 
@@ -147,7 +163,7 @@ impl ClientBuilder {
             http,
             endpoints: self.endpoints,
             instance_id: allocate_client_instance_id()?,
-            tokens: Arc::new(TokenStore::default()),
+            tokens: Arc::new(TokenStore::new(self.wall_clock)),
             rate_limits: Arc::new(RateGovernor::tradovate_defaults()),
             mutation_gate: Arc::new(MutationGate::default()),
             max_request_bytes: self.max_request_bytes,

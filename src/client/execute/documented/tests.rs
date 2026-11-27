@@ -347,6 +347,7 @@ pub(super) fn authenticated_client(server: &MockServer) -> Client {
         "synthetic-access-token".to_owned(),
         None,
         SessionInfo::new(user_id, expires_at, false),
+        client.tokens.now(),
     )
     .unwrap_or_else(|error| panic!("fixture session must validate: {error}"));
     let authentication = client.tokens.begin_authentication();

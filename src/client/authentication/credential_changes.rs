@@ -98,8 +98,8 @@ impl Client {
                 return Err(Error::AmbiguousMutation { endpoint });
             }
         }
-        let session =
-            rotated_session(response.value()).map_err(|_| Error::AmbiguousMutation { endpoint })?;
+        let session = rotated_session(response.value(), self.tokens.now())
+            .map_err(|_| Error::AmbiguousMutation { endpoint })?;
         if session.info().user_id() != expected_user_id {
             return Err(Error::AmbiguousMutation { endpoint });
         }
@@ -129,7 +129,10 @@ impl DocumentedMutationResponse for AccessTokenResponse {
     }
 }
 
-fn rotated_session(response: &AccessTokenResponse) -> Result<InstalledSession, Error> {
+fn rotated_session(
+    response: &AccessTokenResponse,
+    now: jiff::Timestamp,
+) -> Result<InstalledSession, Error> {
     let token = response
         .access_token_secret()
         .ok_or(Error::InvalidAuthenticationResponse {
@@ -149,5 +152,5 @@ fn rotated_session(response: &AccessTokenResponse) -> Result<InstalledSession, E
             reason: "credential-change response omitted userId",
         })?;
     let info = SessionInfo::new(user_id, expires_at, false);
-    InstalledSession::try_new(token.expose().to_owned(), None, info)
+    InstalledSession::try_new(token.expose().to_owned(), None, info, now)
 }

@@ -144,11 +144,14 @@ pub(super) fn encode_request(
     )
 }
 
-pub(super) fn into_session(response: AccessTokenResponse) -> Result<InstalledSession, Error> {
+pub(super) fn into_session(
+    response: AccessTokenResponse,
+    now: jiff::Timestamp,
+) -> Result<InstalledSession, Error> {
     // `mdAccessToken` is published in the pinned endpoint prose example even
     // though the adjacent component schema omits it. This narrow private
     // compatibility field is the only source of market-data capability.
     let has_market_data = response.md_access_token.is_some();
     let info = SessionInfo::new(response.user_id, response.expiration_time, has_market_data);
-    InstalledSession::try_new(response.access_token, response.md_access_token, info)
+    InstalledSession::try_new(response.access_token, response.md_access_token, info, now)
 }
