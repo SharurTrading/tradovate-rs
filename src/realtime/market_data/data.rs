@@ -218,7 +218,6 @@ impl Histogram {
     }
 
     /// Iterates signed provider buckets and their exact values.
-    #[must_use]
     pub fn items(&self) -> impl ExactSizeIterator<Item = (i64, &Decimal)> {
         self.items.iter().map(|(offset, value)| (*offset, value))
     }

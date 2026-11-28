@@ -33,7 +33,7 @@ static NEXT_CLIENT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) fn allocate_client_instance_id() -> Result<u64, ConfigError> {
     NEXT_CLIENT_INSTANCE_ID
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, checked_add_one)
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, checked_add_one)
         .map_err(|_| ConfigError::InvalidSetting {
             field: "client_instance_id",
             reason: "process-local identity space is exhausted",
