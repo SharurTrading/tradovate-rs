@@ -439,14 +439,16 @@ async fn pending_limit_refuses_new_work_with_a_typed_error() {
     use tradovate_client::realtime::RealtimeError;
     let (client, listener) = fixture().await;
     let (first_seen, seen) = tokio::sync::oneshot::channel();
+    let (release, wait) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
         let mut socket = accept(&listener).await;
         authorize(&mut socket).await;
         let first = text(&mut socket).await;
         assert!(first.starts_with("md/subscribeQuote\n2\n"));
-        // Never acknowledge the first subscription, so its pending slot stays
-        // occupied while the second request is refused locally.
+        // Acknowledge only after the refusal below, so the first subscription's
+        // pending slot stays occupied until then on every scheduler.
         assert!(first_seen.send(()).is_ok());
+        assert!(wait.await.is_ok());
         send(&mut socket, r#"a[{"i":2,"s":200}]"#).await;
         closed(&mut socket).await;
     });
@@ -464,6 +466,8 @@ async fn pending_limit_refuses_new_work_with_a_typed_error() {
             .await,
         Err(RealtimeError::PendingLimitReached { limit: 1 })
     ));
+    // Release the acknowledgment so the admitted subscription still completes.
+    assert!(release.send(()).is_ok());
     assert!(first.await.unwrap_or_else(|e| panic!("join: {e}")).is_ok());
     assert!(connection.shutdown().await.is_ok());
     assert!(server.await.is_ok());
