@@ -9,7 +9,7 @@ fn one_oversized_query_value_is_rejected_before_insertion() {
     let value = "x".repeat(MAX_QUERY_SOURCE_BYTES + 1);
     let result = push_query_value(&mut pairs, "name", &value);
     assert!(matches!(result, Err(crate::Error::InvalidRequest { .. })));
-    assert!(pairs.is_empty());
+    assert_eq!(pairs, [] as [(&str, String); 0]);
 }
 
 #[test]

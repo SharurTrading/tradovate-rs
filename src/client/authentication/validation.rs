@@ -90,16 +90,13 @@ pub(super) fn validate_oauth_grant(grant: &OAuthToken) -> Result<(), Error> {
 impl crate::client::ControlWireResponse for OAuthTokenResponse {
     fn has_success_evidence(body: &[u8]) -> bool {
         serde_json::from_slice::<Self>(body)
-            .ok()
-            .is_some_and(|response| response.access_token_secret().is_some())
+            .is_ok_and(|response| response.access_token_secret().is_some())
     }
 }
 
 impl crate::client::ControlWireResponse for OAuthMeResponse {
     fn has_success_evidence(body: &[u8]) -> bool {
-        serde_json::from_slice::<Self>(body)
-            .ok()
-            .is_some_and(|response| response.user_id().is_some())
+        serde_json::from_slice::<Self>(body).is_ok_and(|response| response.user_id().is_some())
     }
 }
 
